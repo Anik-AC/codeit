@@ -20,8 +20,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M1 Jira client | Done |
 | M2 jira-mcp | Done |
 | M3 Planner | Done |
-| M4 Sandbox + Claude backend | In review |
-| M4.5 to M13 | Planned (see PRD section 23) |
+| M4 Sandbox + Claude backend | Done |
+| M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | In review |
+| M5 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -154,6 +155,16 @@ uv run codeit plan my-plan.md --epic "Q4 work"             # name the new Epic y
 
 - `uv run codeit config validate` shows which model each list uses, and whether it comes from `.env`.
 
+## Target repo
+
+CodeIt's agents work on [`codeit-sandbox-app`](https://github.com/Anik-AC/codeit-sandbox-app), a small task tracker that can only list tasks so far (ADR-0010). Its `codeit.yaml` lists the commands agents and the Reviewer run: install, lint, typecheck, unit, e2e. `codeit.target.load_target_config` reads it.
+
+To check that the target repo passes all its commands inside the worker image:
+
+```bash
+LIVE=1 uv run pytest tests/live/test_target_repo_live.py        # set CODEIT_TARGET_BRANCH for a branch
+```
+
 ## Worker sandbox
 
 Agents that change code run in Docker containers built from `sandbox/Dockerfile`. The image is Playwright 1.63 plus `gh`, `jq`, `uv`, Claude Code and OpenCode, running as user `agent` (UID 1000).
@@ -196,6 +207,7 @@ Jira and deletes it.
 | `src/codeit/backends/` | Model adapters: Claude Code (chat on the host, agentic in containers), OpenRouter, routing, parking |
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
+| `src/codeit/target.py` | The target repo's `codeit.yaml` |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |

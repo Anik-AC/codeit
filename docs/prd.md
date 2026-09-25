@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.5 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0009)
+**Status:** Draft v1.5 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0010)
 **Date:** 2026-09-25
 
 ---
