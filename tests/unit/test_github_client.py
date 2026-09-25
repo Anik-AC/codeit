@@ -147,3 +147,21 @@ async def test_retries_then_errors(mock: respx.MockRouter, gh: GitHubClient) -> 
     mock.get("/down").mock(side_effect=httpx.ConnectError("x"))
     with pytest.raises(GitHubError, match="GET /down"):
         await gh.get_json("/down")
+
+
+async def test_check_runs(mock: respx.MockRouter, gh: GitHubClient) -> None:
+    from codeit.github_client.prs import check_runs
+
+    mock.get(f"/repos/{REPO}/commits/abc/check-runs").respond(
+        json={
+            "check_runs": [
+                {"name": "checks", "status": "completed", "conclusion": "success"},
+                {"name": "e2e", "status": "in_progress", "conclusion": None},
+            ]
+        }
+    )
+    runs = await check_runs(gh, REPO, "abc")
+    assert [(r.name, r.status, r.conclusion) for r in runs] == [
+        ("checks", "completed", "success"),
+        ("e2e", "in_progress", None),
+    ]

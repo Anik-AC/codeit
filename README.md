@@ -21,8 +21,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M2 jira-mcp | Done |
 | M3 Planner | Done |
 | M4 Sandbox + Claude backend | Done |
-| M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | In review |
-| M5 to M13 | Planned (see PRD section 23) |
+| M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | Done |
+| M5 Coder | In review |
+| M6 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -141,6 +142,32 @@ uv run codeit plan my-plan.md --epic "Q4 work"             # name the new Epic y
 - **Invalid answers** are retried once with the validation errors.
 - **Failures:** if Jira rejects any write, the run deletes what it created.
 
+## Coder
+
+Takes a ticket in `Ready for Dev` to a pull request (PRD 11.2):
+
+```bash
+uv run codeit run coder CODEIT-12            # claim, implement in a container, open or update the PR
+uv run codeit run coder --file ticket.md     # local run: no Jira, the agent only commits in the clone
+```
+
+What a run does:
+
+1. **Claims the ticket:** takes a lease, moves the ticket to `In Dev`, and sets `Agent` and `Run ID`.
+2. **Prepares a workspace:** the ticket's clone on `{KEY}-{slug}`, or on the existing PR's branch for rework.
+3. **Runs Claude Code in a worker container.** The container gets a coder run token for jira-mcp, and the prompt includes feedback since the last run (Jira comments and PR reviews).
+4. **Applies the result.** If GitHub confirms the PR has new commits, the ticket gets `PR URL` and a remote link and moves to `Agent Review`. Otherwise it gets a comment and `needs-human`, and moves to `Human Review`. After a usage limit, it goes back to `Ready for Dev`.
+
+It needs `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_TOKEN_AGENT` and `GITHUB_TOKEN_READONLY` in `.env`, the worker image, and the target repo's steering kit.
+
+**Steering kit.** The Coder follows the target repo's own instructions. Add them once:
+
+```bash
+uv run codeit init-target ~/projects/my-app   # CLAUDE.md, .claude/skills/*, .claude/settings.json + hooks
+```
+
+Then fill in the placeholder sections of `CLAUDE.md` and commit. The Stop hook runs the unit tests and refuses to let the agent finish while they fail. The edit hook lints each changed file.
+
 ## Models and keys
 
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
@@ -203,10 +230,12 @@ Jira and deletes it.
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
-| `src/codeit/agents/` | Agents: `planner.py` (draft, plan, apply), `planner_run.py` (`codeit plan`) |
+| `src/codeit/agents/` | Agents: `planner.py` and `planner_run.py` (`codeit plan`); `coder.py` and `coder_run.py` (`codeit run coder`) |
 | `src/codeit/backends/` | Model adapters: Claude Code (chat on the host, agentic in containers), OpenRouter, routing, parking |
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
+| `src/codeit/github_client/` | GitHub REST: PRs, feedback, check runs |
+| `src/codeit/orchestrator/` | Leases (the scheduler loop lands in M7) |
 | `src/codeit/target.py` | The target repo's `codeit.yaml` |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |

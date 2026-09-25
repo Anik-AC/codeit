@@ -110,3 +110,18 @@ async def pr_feedback(
 
 def _login(raw: dict[str, Any]) -> str:
     return str((raw.get("user") or {}).get("login") or "unknown")
+
+
+class CheckRun(BaseModel):
+    name: str
+    status: str  # queued | in_progress | completed
+    conclusion: str | None = None  # success | failure | neutral | cancelled | skipped | ...
+
+
+async def check_runs(gh: GitHubClient, repo: str, sha: str) -> list[CheckRun]:
+    """CI check runs for a commit (PRD 8 `get_check_runs`)."""
+    data = await gh.get_json(f"/repos/{repo}/commits/{sha}/check-runs", {"per_page": 100})
+    return [
+        CheckRun(name=r["name"], status=r["status"], conclusion=r.get("conclusion"))
+        for r in data.get("check_runs") or []
+    ]
