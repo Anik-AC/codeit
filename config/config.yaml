@@ -1,0 +1,73 @@
+# CodeIt configuration (PRD 20.1). Secrets go in .env, never here.
+# Model IDs are placeholders; fill them from OpenRouter's catalog at M3 and M6.
+data_dir: data
+
+project:
+  jira_project_key: CODEIT
+  target_repo:
+    name: codeit-sandbox-app
+    url: https://github.com/Anik-AC/codeit-sandbox-app.git
+    default_branch: main
+
+orchestrator:
+  poll_seconds: 45
+  max_review_loops: 3
+  lease_ttl_minutes: { coder: 90, reviewer: 40, rebase: 30 }
+
+slots: { planner: 1, coder: 1, reviewer: 2, rebase: 1, docs: 1, learning: 1 }
+
+routing:
+  planner:  { primary: claude_code_chat, fallback: openrouter_free }
+  coder:    { primary: claude_code, fallback: opencode_paid, fallback_requires_label: allow-fallback }
+  reviewer: { primary: openrouter_paid_review, fallback: openrouter_free }
+  rebase:   { primary: claude_code, fallback: opencode_paid }
+  docs:     { primary: openrouter_free, fallback: openrouter_paid_cheap }
+  learning: { primary: claude_code_chat, fallback: openrouter_paid_cheap }
+  ops:      { primary: openrouter_free }
+
+models:
+  openrouter_free: ["<free-model-1>:free", "<free-model-2>:free", "<free-model-3>:free"]
+  openrouter_paid_review: ["<cheap-non-anthropic-coding-model>"]
+  openrouter_paid_cheap: ["<cheap-model>"]
+  opencode_paid: "openrouter/<cheap-coding-model>"
+
+claude:
+  run_window: ["23:00-08:00"]
+  max_concurrent_runs: 1
+  max_turns: { coder: 80, rebase: 40 }
+  usage_limit_patterns: ["usage limit", "limit reached", "rate limit"]
+
+openrouter:
+  daily_usd_cap: { reviewer: 0.50, docs: 0.10, ops: 0.10, coder: 1.00 }
+  free_requests_daily_cap: 900
+
+sandbox:
+  image: codeit-worker:0.1.0
+  cpus: 2
+  mem: 4g
+  pids_limit: 512
+  timeouts_minutes: { coder: 60, reviewer: 30, rebase: 20 }
+  egress_allowlist:
+    - api.anthropic.com
+    - claude.ai
+    - console.anthropic.com
+    - openrouter.ai
+    - github.com
+    - api.github.com
+    - codeload.github.com
+    - objects.githubusercontent.com
+    - registry.npmjs.org
+    - pypi.org
+    - files.pythonhosted.org
+    - playwright.azureedge.net
+    # The Jira site is deliberately absent: containers reach Jira only via the
+    # host-side jira-mcp (PRD 15, ADR-0004).
+
+rebase:
+  poll_minutes: 10
+  max_files: 5
+  never_auto: ["**/migrations/**", "package-lock.json", ".github/**"]
+
+docs: { run_at: "07:00" }
+learning: { cron: "0 22 * * SUN", min_new_signals: 10 }
+eval: { regression_tolerance: 0.05 }

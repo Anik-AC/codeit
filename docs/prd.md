@@ -1,8 +1,8 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.1 (renamed to CodeIt; see ADRs 0001 to 0003)
-**Date:** 2026-09-24
+**Status:** Draft v1.2 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0004)
+**Date:** 2026-09-25
 
 ---
 
@@ -109,7 +109,8 @@ HOST (owner's machine)
 ├── backends/         LLM backend adapters (claude_code, opencode, openrouter_chat)
 ├── jira_client/      Shared Jira library (used by the orchestrator and jira-mcp)
 ├── github_client/    Thin wrapper over gh CLI + GitHub REST
-├── mcp_servers/jira  FastMCP server exposing jira_client tools to agents
+├── mcp_servers/jira  FastMCP server exposing jira_client tools to agents. Runs on the host
+│                     over streamable HTTP; the only holder of the Jira token (Section 15)
 ├── dashboard/        Next.js app, reads the orchestrator API
 ├── evals/            Golden tasks, runner, scorers
 └── SQLite DB         data/codeit.db
@@ -120,7 +121,8 @@ WORKER CONTAINERS (one per active agent job, created from sandbox/Dockerfile)
 ├── OpenCode CLI      auth via OpenRouter key (fallback only)
 ├── gh CLI            auth via a branch-only GitHub token
 ├── Node LTS, Playwright browsers, Python
-└── jira-mcp          run as a stdio MCP server inside the container, with a role-scoped tool allowlist
+└── /run/mcp.json     points at the host jira-mcp endpoint with a short-lived run token.
+                      No Jira credential is present in the container.
 
 REMOTE: Jira Cloud Free · GitHub · OpenRouter · Anthropic (via Pro login)
 ```
@@ -128,6 +130,7 @@ REMOTE: Jira Cloud Free · GitHub · OpenRouter · Anthropic (via Pro login)
 ### 5.2 Trust boundaries
 
 - **The host holds all credentials:** Jira bot token, GitHub PAT, OpenRouter keys, Claude OAuth token.
+- **The Jira token never leaves the host.** Agents reach Jira only through the host-side jira-mcp server, authenticated with a per-run token bound to one role and one ticket (Section 15, ADR-0004).
 - **Worker containers are untrusted.** They run LLM-driven shell commands on input derived from ticket text.
 - **Containers receive only what their role needs** (see Section 19).
 - **The orchestrator is the only component that transitions Jira statuses.** Agents return a result, and the orchestrator applies the transition. This keeps the state machine in one place and testable.
@@ -416,7 +419,7 @@ Model IDs live in `config.yaml`. Free model IDs rotate, so the config holds an o
 ### 10.1 Image (`sandbox/Dockerfile`)
 
 - **Base:** the official Playwright image (Node LTS + browsers).
-- **Adds:** Python 3.12, `git`, `gh`, `jq`, Claude Code CLI, OpenCode CLI, and the `codeit-mcp` package (for jira-mcp over stdio).
+- **Adds:** Python 3.12, `git`, `gh`, `jq`, Claude Code CLI, OpenCode CLI. jira-mcp is **not** installed in the image; it runs on the host (Section 15).
 - **Non-root user:** `agent`, UID 1000.
 - **Tag:** `codeit-worker:{version}`. Built by `codeit sandbox build`.
 
@@ -439,7 +442,7 @@ Uses the Python Docker SDK.
 
 - **Mounts:**
   - the worktree read-write at `/workspace`
-  - a per-run directory at `/run` (MCP config, prompt file, outputs)
+  - a per-run directory at `/run` (MCP config with the run's jira-mcp token, prompt file, outputs)
   - nothing else from the host
 - **Environment:** only role-required variables (Section 19).
 - **Limits:**
@@ -447,8 +450,10 @@ Uses the Python Docker SDK.
   - wall-clock timeout per role (coder 60 minutes, reviewer 30, rebase 20)
 - **Network:**
   - a dedicated Docker network whose egress goes through an allowlisting proxy (`tinyproxy`, run as a sidecar via `sandbox/compose.yaml`)
-  - **allowlist:** `api.anthropic.com`, `claude.ai`, `console.anthropic.com`, `openrouter.ai`, `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, the Jira site host, Playwright CDN hosts
+  - **allowlist:** `api.anthropic.com`, `claude.ai`, `console.anthropic.com`, `openrouter.ai`, `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, Playwright CDN hosts
   - the list lives in config
+  - **The Jira site host is not on the allowlist.** Containers have no Jira credential and no route to Jira. Their only path to Jira is the host jira-mcp endpoint (Section 15).
+  - **Host reachability:** the jira-mcp listener must be reachable from the sandbox network and from nowhere wider (not the LAN). The exact bind address and container-side hostname (for example `host.docker.internal`) under Docker Desktop + WSL2 are verified in M4 and recorded in an ADR.
   - **Fallback if the proxy is deferred:** M4 may start with an unrestricted network, but the proxy must land before M7 is complete.
 - **Teardown:** containers are removed after the run. Logs are kept.
 
@@ -765,9 +770,18 @@ codeit agents                  # show instances
 
 **Package:** `mcp_servers/jira/`. Python, built on the official MCP SDK (FastMCP). Wraps `jira_client`.
 
+**Where it runs:** on the host, never in a worker container. It is the only component besides the orchestrator that holds the Jira token (ADR-0004).
+
 **Transports:**
-- **stdio** (inside worker containers)
-- **streamable HTTP** on `127.0.0.1:8765`, optional, so the owner can connect Claude Desktop or Claude Code interactively
+- **streamable HTTP** on `127.0.0.1:8765` (bind address configurable, see 10.3). This is the path for worker containers. Every request needs a bearer run token.
+- **stdio**, for the owner's interactive use from Claude Code or Claude Desktop on the host. Runs as role `human`, set by `CODEIT_ROLE` in the host environment. There is no network listener, so no token is needed.
+
+**Run tokens (HTTP):**
+- **Minted by the orchestrator** when it launches an agent run that needs Jira: 32 random bytes, URL-safe encoded.
+- **Bound to** `{role, ticket_key, run_id}`. The server reads role and ticket from the token, never from anything the container sends.
+- **Short-lived:** expires at the role's wall-clock timeout (10.3) plus 5 minutes, and is revoked when the run ends, whatever the outcome.
+- **Stored hashed** (SHA-256) in the server's token registry. The plaintext exists only in the run's `/run/mcp.json`, as an `Authorization: Bearer` header.
+- **Rejection:** a missing, unknown, expired or revoked token gets HTTP 401. The event is logged with the `run_id` if known.
 
 **Tools** (typed inputs; outputs are markdown text plus structured content):
 
@@ -782,8 +796,8 @@ codeit agents                  # show instances
 
 **Rules:**
 - **No transition tool is exposed to agents.** Only the orchestrator transitions.
-- **Role enforcement:** the server reads `CODEIT_ROLE` from its environment and registers only the allowed tools, so a disallowed tool is invisible rather than refused.
-- **Key restriction:** in worker containers, `CODEIT_TICKET` limits `add_comment` to that ticket key.
+- **Role enforcement:** a session sees only the tools its role allows, so a disallowed tool is invisible rather than refused. Calls to a hidden tool are also rejected, as a second check.
+- **Ticket binding:** with a run token, `add_comment` accepts only the token's `ticket_key`. Read tools accept only keys in the configured project.
 - **Tool descriptions are written for models:**
   - say when to use the tool
   - give one example
@@ -791,8 +805,9 @@ codeit agents                  # show instances
 
 **Tests:**
 - unit tests per tool with a mocked `jira_client`
+- token tests: missing, expired, revoked and wrong-ticket tokens are rejected; each role sees exactly its tools
 - an MCP Inspector smoke test documented in the README
-- an integration test that runs `claude -p` with the MCP config and asks it to fetch a fixture ticket (`live` marker)
+- an integration test that runs `claude -p` with an HTTP MCP config and a run token and asks it to fetch a fixture ticket (`live` marker)
 
 ## 16. Target repo steering kit
 
@@ -933,15 +948,22 @@ tasks/
 
 | Role | Credentials in the container |
 |---|---|
-| coder | `CLAUDE_CODE_OAUTH_TOKEN` (or the OpenRouter coder key when falling back), branch-push GitHub token, Jira bot token for jira-mcp (read + comment tools only) |
-| reviewer | No LLM keys (the LLM call runs on the host), read-only GitHub token |
-| rebase | Same as coder |
+| coder | `CLAUDE_CODE_OAUTH_TOKEN` (or the OpenRouter coder key when falling back), branch-push GitHub token, a jira-mcp run token (role `coder`, this ticket only) |
+| reviewer | No LLM keys (the LLM call runs on the host), read-only GitHub token. No jira-mcp token: the Reviewer's Jira comment is posted from the host. |
+| rebase | Same as coder, with a run token for role `rebase` |
+
+   **No Jira credential ever enters a worker container.** jira-mcp runs on the host and holds the Jira token. Containers get only a short-lived run token bound to their role and ticket (Section 15, ADR-0004). A leaked run token lets an attacker call that role's jira-mcp tools on that ticket until the run ends. It cannot transition statuses, and it does not work from outside the sandbox network.
 
 2. **GitHub tokens:** fine-grained, target repo only. The agent token can push branches, and branch protection prevents pushes to `main`.
 3. **Untrusted input:** ticket text, PR comments and repo content are all treated as untrusted. Prompts wrap them in clearly delimited sections and instruct the model to treat them as data. Containers have no host mounts beyond the worktree.
 4. **Network:** container egress is allowlisted (10.3).
 5. **Secrets:** `.env` is gitignored, and `.env.example` is committed. A pre-commit hook (gitleaks) runs in the CodeIt repo and the target repos.
 6. **Permissions flag:** `--dangerously-skip-permissions` appears only in the container adapter, and a unit test asserts it is never used on the host.
+7. **Accepted risk: the Claude OAuth token is in coder and rebase containers.** Claude Code must authenticate from inside the container, and there is no proxy for it. A prompt-injected agent can read `CLAUDE_CODE_OAUTH_TOKEN`.
+   - **Impact:** someone else uses the owner's Claude Pro quota until the token is revoked. The token does not grant access to Jira, GitHub or the host.
+   - **Limited by the egress allowlist (10.3):** the container can reach only allowlisted hosts, so it cannot send the token to an arbitrary server.
+   - **Residual:** allowlisted channels can still carry the token out, for example a push to the ticket branch, a PR body or comment, or a request to `openrouter.ai`. The owner reviews every PR, and gitleaks runs in CI on target repos.
+   - **Response:** if a leak is suspected, revoke the token and issue a new one with `claude setup-token`.
 
 ## 20. Configuration
 
@@ -996,9 +1018,11 @@ The owner fills in model IDs at M3 and M6 from OpenRouter's current catalog.
 ```
 JIRA_BASE_URL=https://<site>.atlassian.net
 JIRA_EMAIL=
+# Host only (orchestrator and jira-mcp). Never passed to containers.
 JIRA_API_TOKEN=
 GITHUB_TOKEN_AGENT=
 GITHUB_TOKEN_READONLY=
+# Passed into coder and rebase containers (accepted risk, Section 19.7).
 CLAUDE_CODE_OAUTH_TOKEN=
 OPENROUTER_KEY_REVIEWER=
 OPENROUTER_KEY_OPS=
@@ -1056,7 +1080,7 @@ codeit/
 |---|---|---|---|
 | **M0** | Scaffold | Repo layout, `pyproject`, config loading, logging, DB + Alembic baseline, Typer CLI skeleton, CI | `codeit --help` works. CI green. `codeit config validate` catches a malformed config. |
 | **M1** | Jira client + setup | `jira_client` (all modules), ADF converter, `codeit jira doctor` / `discover` | Doctor passes on the owner's site. ADF round-trip tests for all supported nodes. Search pagination tested including the repeated-token guard. Transition to each status works on a live test issue. |
-| **M2** | jira-mcp | FastMCP server, role-scoped tools, stdio + HTTP | Unit tests per tool. Inspector smoke test documented. Owner can call `get_ticket` from interactive Claude Code. Disallowed tools are absent for each role. |
+| **M2** | jira-mcp | Host-side FastMCP server, role-scoped tools, streamable HTTP with per-run bearer tokens, stdio for the owner | Unit tests per tool. Inspector smoke test documented. Owner can call `get_ticket` from interactive Claude Code. Disallowed tools are absent for each role. Invalid, expired and wrong-ticket tokens are rejected. |
 | **M3** | Planner | Planner agent, prompt, schema, dry-run, creation + links, `split-me` | Sample plan creates valid tickets in `Agent Draft` with links. Dry-run output matches created tickets. Invalid JSON is retried once. |
 | **M4** | Sandbox + Claude backend | Dockerfile, per-ticket clone manager, container runner, `claude_code` backend with stream parsing and usage-limit detection | `codeit sandbox build` works. A container can run `claude -p "echo hello via bash"` and the transcript is saved. Simulated usage-limit output parks the backend. |
 | **M4.5** | Minimal sandbox app | `codeit-sandbox-app`: Vite + React + TS frontend, Express + TS API, SQLite, Vitest, Playwright, `ci.yml`, `codeit.yaml` (the steering kit is added in M5 by `codeit init-target`) | CI green on GitHub. Install, unit and e2e commands pass locally and inside the worker image. |
@@ -1085,7 +1109,7 @@ codeit/
 | Free OpenRouter models disappear or 429 | Ordered model lists, dead-model marking, paid cheap fallback with daily caps |
 | Tautological tests | `new_tests_fail_on_base` check |
 | Coder/reviewer ping-pong | `max_review_loops`, escalation |
-| Prompt injection from tickets or PRs | Container isolation, scoped credentials, egress allowlist, no transition tool for agents |
+| Prompt injection from tickets or PRs | Container isolation, scoped credentials, no Jira token in containers (host-side jira-mcp with per-run tokens), egress allowlist, no transition tool for agents |
 | Orchestrator crash mid-run | Leases, heartbeats, reaper, idempotent transitions |
 | Jira API changes or pagination bugs | All calls in `jira_client`, repeated-token guard, live tests runnable on demand |
 | Jira Free site deactivated for inactivity | Regular use keeps it active. Document in README. |

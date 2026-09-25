@@ -1,0 +1,13 @@
+# Deliberately malformed: every section below has at least one error.
+project:
+  jira_project_key: codeit            # must be uppercase
+  target_repo: { name: sandbox, url: https://example.com/x.git }
+routing:
+  coder: { primary: no_such_backend }  # unknown backend
+models:
+  openrouter_free: ["m:free"]
+claude:
+  run_window: ["11pm-8am"]             # must be HH:MM-HH:MM
+sandbox:
+  image: CodeIt-worker:0.1.0           # Docker needs lowercase
+unknown_section: true                  # extra keys are rejected
