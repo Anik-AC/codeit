@@ -27,3 +27,6 @@ node_modules/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Generated per Jira site by `codeit jira discover`
+config/jira_ids.yaml

@@ -51,9 +51,9 @@ def test_db_upgrade(tmp_path: Path) -> None:
 
 
 def test_stub_names_milestone() -> None:
-    result = runner.invoke(app, ["jira", "doctor"])
+    result = runner.invoke(app, ["plan", "plan.md"])
     assert result.exit_code == 2
-    assert "M1" in result.output
+    assert "M3" in result.output
 
 
 def test_json_logs_carry_run_context(tmp_path: Path) -> None:

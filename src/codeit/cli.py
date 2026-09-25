@@ -6,13 +6,17 @@ each stub names the milestone that implements it.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Annotated, NoReturn
 
 import typer
 
 from codeit import __version__, db
-from codeit.config import DEFAULT_CONFIG_PATH, Config, ConfigError, load_config
+from codeit.config import DEFAULT_CONFIG_PATH, Config, ConfigError, Secrets, load_config
+from codeit.jira_client import JiraClient, JiraConfigError, JiraError
+from codeit.jira_client.discover import DEFAULT_IDS_PATH, DiscoveryError, discover, write_ids
+from codeit.jira_client.doctor import Check, run_doctor
 
 app = typer.Typer(help="CodeIt: local multi-agent software delivery.", no_args_is_help=True)
 config_app = typer.Typer(help="Inspect and validate configuration.", no_args_is_help=True)
@@ -85,21 +89,84 @@ def db_upgrade(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
     typer.echo(f"Database at {cfg.db_path} is up to date.")
 
 
-# later milestones ----------------------------------------------------------------------------
+# jira -----------------------------------------------------------------------------------------
+
+
+def _jira_client() -> JiraClient:
+    try:
+        return JiraClient.from_secrets(Secrets())
+    except JiraConfigError as e:
+        typer.echo(f"{e}. See .env.example.", err=True)
+        raise typer.Exit(code=1) from e
+
+
+def _print_checks(checks: list[Check]) -> None:
+    width = max(len(c.name) for c in checks)
+    for c in checks:
+        typer.echo(f"{'PASS' if c.ok else 'FAIL'}  {c.name:<{width}}  {c.detail}")
+        if c.hint:
+            typer.echo(f"      {'':<{width}}  hint: {c.hint}")
 
 
 @jira_app.command("doctor")
 def jira_doctor(
-    write_test: Annotated[bool, typer.Option("--write-test")] = False,
+    write_test: Annotated[
+        bool, typer.Option("--write-test", help="Also create and delete a test issue.")
+    ] = False,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """Check auth, project, statuses and custom fields."""
-    _not_implemented("M1")
+    """Check auth, project, statuses, custom fields and transitions."""
+    cfg = _load(config)
+
+    async def go() -> list[Check]:
+        async with _jira_client() as client:
+            return await run_doctor(client, cfg.project.jira_project_key, write_test=write_test)
+
+    try:
+        checks = asyncio.run(go())
+    except JiraError as e:
+        typer.echo(f"Jira error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    _print_checks(checks)
+    if not all(c.ok for c in checks):
+        raise typer.Exit(code=1)
 
 
 @jira_app.command("discover")
-def jira_discover() -> None:
-    """Discover Jira field, status and issue type IDs into config/jira_ids.yaml."""
-    _not_implemented("M1")
+def jira_discover(
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    out: Annotated[
+        Path, typer.Option("--out", help="Where to write the IDs.", dir_okay=False)
+    ] = DEFAULT_IDS_PATH,
+) -> None:
+    """Discover Jira field, status, issue type and transition IDs into config/jira_ids.yaml."""
+    cfg = _load(config)
+
+    async def go() -> None:
+        async with _jira_client() as client:
+            ids = await discover(client, cfg.project.jira_project_key)
+        write_ids(ids, out)
+        typer.echo(
+            f"Wrote {out}: {len(ids.statuses)} statuses, {len(ids.issue_types)} work types, "
+            f"{len(ids.transitions)} transitions."
+        )
+        if not ids.transitions:
+            typer.echo("No issues to sample transitions from; they will be fetched on use.")
+
+    try:
+        asyncio.run(go())
+    except DiscoveryError as e:
+        typer.echo("Discovery failed:", err=True)
+        for problem in e.problems:
+            typer.echo(f"  - {problem}", err=True)
+        typer.echo("Run `codeit jira doctor` for remediation hints.", err=True)
+        raise typer.Exit(code=1) from e
+    except JiraError as e:
+        typer.echo(f"Jira error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+
+# later milestones ----------------------------------------------------------------------------
 
 
 @app.command("plan")
