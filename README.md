@@ -17,7 +17,7 @@ _Metrics appear here once the Docs agent runs (M11)._
 | Milestone | State |
 |---|---|
 | M0 Scaffold | Done |
-| M1 Jira client | Next |
+| M1 Jira client | In review (live checks pending) |
 | M2 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
@@ -46,7 +46,29 @@ uv run codeit config validate [-c path/to/config.yaml]
 uv run codeit db upgrade
 ```
 
-Commands for later milestones (`jira`, `plan`, `run`, `sandbox`, `up`, `eval`, ...) are registered already. Until then they exit with a message naming their milestone.
+Commands for later milestones (`plan`, `run`, `sandbox`, `up`, `eval`, ...) are registered already. Until then they exit with a message naming their milestone.
+
+## Jira setup
+
+1. Set up the project as described in [PRD 7.1](docs/prd.md#71-one-time-manual-setup-owner): a team-managed project with key `CODEIT` (or whatever `project.jira_project_key` says), the statuses, the custom fields on the Story work type, and board estimation.
+2. Fill in `.env`:
+
+   ```bash
+   JIRA_BASE_URL=https://<your-site>.atlassian.net
+   JIRA_EMAIL=<the account's email>
+   JIRA_API_TOKEN=<classic API token for that account>
+   ```
+
+   Create the token at https://id.atlassian.com/manage-profile/security/api-tokens. Until a bot account exists, your own account is fine (ADR-0001).
+3. Check the setup, then record the site's IDs:
+
+   ```bash
+   uv run codeit jira doctor               # read-only checks, with a hint for each failure
+   uv run codeit jira doctor --write-test  # also creates and deletes a test issue
+   uv run codeit jira discover             # writes config/jira_ids.yaml (gitignored)
+   ```
+
+   Rerun `discover` after changing fields, statuses or work types in Jira.
 
 ## Development
 
@@ -55,6 +77,9 @@ uv run ruff check . && uv run ruff format --check .
 uv run mypy
 uv run pytest                     # unit tests; live tests are skipped
 LIVE=1 uv run pytest -m live      # hits real Jira / GitHub / OpenRouter
+
+Live Jira tests create issues labeled `codeit-live-test` and delete them afterwards. They need
+the Jira setup above.
 ```
 
 **Schema changes:** edit `src/codeit/db/models.py`, then run `uv run alembic revision --autogenerate -m "..."`. `tests/unit/test_db.py` fails if the models and migrations drift apart.
@@ -64,7 +89,8 @@ LIVE=1 uv run pytest -m live      # hits real Jira / GitHub / OpenRouter
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
-| `config/` | `config.yaml`, plus `jira_ids.yaml` generated in M1 |
+| `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
+| `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
 | `mcp_servers/jira/` | jira-mcp server (M2) |
 | `prompts/`, `templates/` | Agent prompts and the target repo steering kit |
 | `sandbox/` | Worker image and egress proxy |
