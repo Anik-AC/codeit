@@ -74,11 +74,24 @@ def main(
 @config_app.command("validate")
 def config_validate(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
     """Validate config.yaml and report every problem found."""
+    from codeit.model_env import effective_models, env_var_for
+
     cfg = _load(config)
+    try:
+        models = effective_models(cfg)
+    except ConfigError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
     typer.echo(
         f"OK: {config} (project {cfg.project.jira_project_key}, "
         f"target repo {cfg.project.target_repo.name})"
     )
+    for name, chosen in models.items():
+        source = "from .env" if chosen != cfg.models[name] else "default"
+        shown = ", ".join(chosen) if isinstance(chosen, list) else chosen
+        typer.echo(f"  {name} ({env_var_for(name)}, {source}): {shown}")
+    if not Secrets().openrouter_key():
+        typer.echo("  note: no OpenRouter key in .env; OpenRouter backends are disabled")
 
 
 # db -------------------------------------------------------------------------------------------
@@ -322,15 +335,77 @@ def run(role: str, key: Annotated[str | None, typer.Argument()] = None) -> None:
 
 
 @sandbox_app.command("build")
-def sandbox_build() -> None:
-    """Build the worker image."""
-    _not_implemented("M4")
+def sandbox_build(
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    context: Annotated[
+        Path, typer.Option("--context", help="Build context with the Dockerfile.", file_okay=False)
+    ] = Path("sandbox"),
+) -> None:
+    """Build the worker image (tag from sandbox.image in config)."""
+    from codeit.sandbox.containers import build_image
+
+    cfg = _load(config)
+    code = build_image(context, cfg.sandbox.image)
+    if code != 0:
+        raise typer.Exit(code=code)
+    typer.echo(f"Built {cfg.sandbox.image}")
+
+
+@sandbox_app.command("smoke")
+def sandbox_smoke(
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    keep: Annotated[bool, typer.Option("--keep", help="Keep the run directory.")] = False,
+) -> None:
+    """Run `claude -p` in a worker container with one Bash call (M4 acceptance)."""
+    from codeit.sandbox.containers import SandboxError
+    from codeit.sandbox.runner import MissingSecret, smoke_test
+
+    cfg = _load(config)
+    try:
+        outcome = asyncio.run(smoke_test(cfg, Secrets(), keep=keep))
+    except (MissingSecret, SandboxError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    r = outcome.result
+    typer.echo(f"status: {r.status}, turns: {r.turns}, model: {r.model}")
+    typer.echo(f"reply: {r.final_message.strip()[:200]}")
+    typer.echo(f"transcript: {r.transcript_path}")
+    typer.echo(f"container log: {outcome.container_log}")
+    if not outcome.ok:
+        raise typer.Exit(code=1)
 
 
 @sandbox_app.command("gc")
-def sandbox_gc() -> None:
-    """Remove clones for terminal or stale tickets."""
-    _not_implemented("M4")
+def sandbox_gc(
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    days: Annotated[int, typer.Option("--days", min=1, help="Remove clones older than this.")] = 14,
+    containers: Annotated[
+        bool,
+        typer.Option(
+            "--containers", help="Also remove all worker containers (orchestrator stopped)."
+        ),
+    ] = False,
+) -> None:
+    """Remove clones of Done or Rejected tickets, and clones older than --days."""
+    from codeit.sandbox.clone import CloneManager
+    from codeit.sandbox.gc import collect_garbage
+
+    cfg = _load(config)
+    repo = cfg.project.target_repo
+    clones = CloneManager(cfg.data_dir, repo.name, repo.url, repo.default_branch)
+    try:
+        removed = asyncio.run(collect_garbage(clones, Secrets(), max_age_days=days))
+    except JiraConfigError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    for key, reason in removed:
+        typer.echo(f"removed {key} ({reason})")
+    typer.echo(f"{len(removed)} clone(s) removed.")
+    if containers:
+        from codeit.sandbox.containers import Sandbox
+
+        for name in Sandbox().reap():
+            typer.echo(f"removed container {name}")
 
 
 @app.command("init-target")
