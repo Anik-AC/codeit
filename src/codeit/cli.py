@@ -7,6 +7,7 @@ each stub names the milestone that implements it.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -24,12 +25,14 @@ db_app = typer.Typer(help="Database migrations.", no_args_is_help=True)
 jira_app = typer.Typer(help="Jira setup checks and ID discovery.", no_args_is_help=True)
 sandbox_app = typer.Typer(help="Worker image and clone management.", no_args_is_help=True)
 eval_app = typer.Typer(help="Evaluation harness.", no_args_is_help=True)
+mcp_app = typer.Typer(help="Host-side jira-mcp server and run tokens.", no_args_is_help=True)
 
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
 app.add_typer(jira_app, name="jira")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(eval_app, name="eval")
+app.add_typer(mcp_app, name="mcp")
 
 ConfigPath = Annotated[
     Path, typer.Option("--config", "-c", help="Path to config.yaml.", dir_okay=False)
@@ -164,6 +167,91 @@ def jira_discover(
     except JiraError as e:
         typer.echo(f"Jira error: {e}", err=True)
         raise typer.Exit(code=1) from e
+
+
+# mcp ------------------------------------------------------------------------------------------
+
+IdsPath = Annotated[Path, typer.Option("--ids", help="Path to jira_ids.yaml.", dir_okay=False)]
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    stdio: Annotated[
+        bool, typer.Option("--stdio", help="Serve over stdio for interactive use on the host.")
+    ] = False,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    ids: IdsPath = DEFAULT_IDS_PATH,
+) -> None:
+    """Run jira-mcp: HTTP with run tokens (default), or stdio as CODEIT_ROLE (default human)."""
+    from mcp_servers.jira.app import serve_http, serve_stdio
+    from mcp_servers.jira.roles import ROLE_TOOLS
+
+    cfg = _load(config)
+    try:
+        if stdio:
+            # stdout carries the MCP protocol: all messages here go to stderr.
+            role = os.environ.get("CODEIT_ROLE", "human")
+            if role not in ROLE_TOOLS:
+                typer.echo(f"CODEIT_ROLE={role!r} is not one of {sorted(ROLE_TOOLS)}", err=True)
+                raise typer.Exit(code=1)
+            asyncio.run(serve_stdio(cfg, ids, role))
+        else:
+            typer.echo(
+                f"jira-mcp on http://{cfg.mcp.host}:{cfg.mcp.port}/mcp (run tokens required)",
+                err=True,
+            )
+            asyncio.run(serve_http(cfg, ids))
+    except (JiraConfigError, FileNotFoundError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+
+
+@mcp_app.command("token")
+def mcp_token(
+    role: Annotated[str, typer.Option("--role", help="Role the token grants.")],
+    ticket: Annotated[
+        str | None, typer.Option("--ticket", help="Ticket the run may comment on.")
+    ] = None,
+    run_id: Annotated[str | None, typer.Option("--run-id", help="Defaults to a new ULID.")] = None,
+    ttl_minutes: Annotated[
+        int | None,
+        typer.Option("--ttl-minutes", min=1, help="Defaults to the role timeout plus grace."),
+    ] = None,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+) -> None:
+    """Mint a run token by hand, for testing before the orchestrator exists (M7).
+
+    Prints only the token on stdout.
+    """
+    from datetime import timedelta
+
+    from ulid import ULID
+
+    from codeit.run_tokens import RunTokenStore, token_ttl
+
+    cfg = _load(config)
+    db.upgrade(cfg.db_path)
+    store = RunTokenStore(db.make_engine(cfg.db_path))
+    ttl = timedelta(minutes=ttl_minutes) if ttl_minutes else token_ttl(cfg, role)
+    run = run_id or str(ULID())
+    try:
+        token = store.mint(role, run, ticket.upper() if ticket else None, ttl)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"run {run}, role {role}, ticket {ticket or '-'}, expires in {ttl}", err=True)
+    typer.echo(token)
+
+
+@mcp_app.command("revoke")
+def mcp_revoke(run_id: str, config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
+    """Revoke every token of a run."""
+    from codeit.run_tokens import RunTokenStore
+
+    cfg = _load(config)
+    db.upgrade(cfg.db_path)
+    count = RunTokenStore(db.make_engine(cfg.db_path)).revoke_run(run_id)
+    typer.echo(f"Revoked {count} token(s) for run {run_id}.")
 
 
 # later milestones ----------------------------------------------------------------------------

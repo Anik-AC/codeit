@@ -8,20 +8,13 @@ Needs JIRA_BASE_URL, JIRA_EMAIL and JIRA_API_TOKEN in `.env`, and the project fr
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
 
 import pytest
-from tests.conftest import REPO_ROOT
 
-from codeit.config import Secrets, load_config
 from codeit.jira_client import JiraClient, JiraIds
 from codeit.jira_client.comments import add_comment, list_comments
-from codeit.jira_client.discover import discover
 from codeit.jira_client.doctor import run_doctor
 from codeit.jira_client.issues import (
-    IssueSpec,
-    create_issue,
-    delete_issue,
     get_ticket,
     link_issues,
     update_fields,
@@ -29,6 +22,7 @@ from codeit.jira_client.issues import (
 from codeit.jira_client.models import REQUIRED_STATUSES
 from codeit.jira_client.search import search
 from codeit.jira_client.transitions import TransitionCache, transition_to
+from tests.live.conftest import Factory
 
 pytestmark = pytest.mark.live
 
@@ -56,47 +50,6 @@ line\\
 break
 
 ---"""
-
-Factory = Callable[..., Awaitable[str]]
-
-
-@pytest.fixture
-def project_key() -> str:
-    return load_config(REPO_ROOT / "config" / "config.yaml").project.jira_project_key
-
-
-@pytest.fixture
-async def jira() -> AsyncIterator[JiraClient]:
-    async with JiraClient.from_secrets(Secrets(_env_file=REPO_ROOT / ".env")) as client:
-        yield client
-
-
-@pytest.fixture
-async def ids(jira: JiraClient, project_key: str) -> JiraIds:
-    return await discover(jira, project_key)
-
-
-@pytest.fixture
-async def new_story(jira: JiraClient, ids: JiraIds, project_key: str) -> AsyncIterator[Factory]:
-    created: list[str] = []
-
-    async def make(summary: str = "live test", description_md: str = "") -> str:
-        key = await create_issue(
-            jira,
-            IssueSpec(
-                project_key=project_key,
-                issue_type_id=ids.issue_type_id("Story"),
-                summary=f"[codeit live test] {summary}",
-                description_md=description_md,
-                labels=[LABEL],
-            ),
-        )
-        created.append(key)
-        return key
-
-    yield make
-    for key in created:
-        await delete_issue(jira, key)
 
 
 async def test_doctor_passes(jira: JiraClient, project_key: str) -> None:

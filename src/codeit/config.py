@@ -108,6 +108,17 @@ class SandboxConfig(_Strict):
     egress_allowlist: list[str] = Field(default_factory=list)
 
 
+class McpConfig(_Strict):
+    """Host-side jira-mcp listener (PRD 15). Containers reach it over HTTP with run tokens."""
+
+    host: str = "127.0.0.1"
+    port: Annotated[int, Field(ge=1, le=65535)] = 8765
+    # Host header values accepted (DNS rebinding protection). M4 adds the name containers use.
+    allowed_hosts: list[str] = Field(default_factory=lambda: ["127.0.0.1:*", "localhost:*"])
+    # Grace period added to the role's sandbox timeout when a run token is minted.
+    token_grace_minutes: PositiveInt = 5
+
+
 class RebaseConfig(_Strict):
     poll_minutes: PositiveInt = 10
     max_files: PositiveInt = 5
@@ -157,6 +168,7 @@ class Config(_Strict):
     claude: ClaudeConfig = ClaudeConfig()
     openrouter: OpenRouterConfig = OpenRouterConfig()
     sandbox: SandboxConfig
+    mcp: McpConfig = McpConfig()
     rebase: RebaseConfig = RebaseConfig()
     docs: DocsConfig = DocsConfig()
     learning: LearningConfig = LearningConfig()

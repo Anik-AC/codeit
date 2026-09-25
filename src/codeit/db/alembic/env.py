@@ -30,6 +30,9 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+        # The PRAGMA autobegins a transaction. Commit it, or Alembic treats it as an outer
+        # transaction it must not commit, and the alembic_version row is silently lost.
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

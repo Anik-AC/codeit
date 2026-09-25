@@ -5,6 +5,7 @@ from pathlib import Path
 
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ PRD_TABLES = {
     "eval_runs",
     "eval_results",
     "signals",
+    "mcp_tokens",  # ADR-0006
 }
 
 
@@ -30,6 +32,15 @@ def test_upgrade_creates_all_prd_tables(tmp_path: Path) -> None:
     db.upgrade(path)
     names = set(inspect(db.make_engine(path)).get_table_names())
     assert names - {"alembic_version"} == PRD_TABLES
+
+
+def test_upgrade_records_version_and_is_rerunnable(tmp_path: Path) -> None:
+    path = tmp_path / "codeit.db"
+    db.upgrade(path)
+    db.upgrade(path)  # a second run must be a no-op, not "table already exists"
+    with db.make_engine(path).connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    assert version == ScriptDirectory.from_config(db.alembic_config(path)).get_current_head()
 
 
 def test_migrations_match_models(tmp_path: Path) -> None:

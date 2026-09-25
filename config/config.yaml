@@ -63,6 +63,12 @@ sandbox:
     # The Jira site is deliberately absent: containers reach Jira only via the
     # host-side jira-mcp (PRD 15, ADR-0004).
 
+mcp:
+  host: 127.0.0.1
+  port: 8765
+  allowed_hosts: ["127.0.0.1:*", "localhost:*"]
+  token_grace_minutes: 5
+
 rebase:
   poll_minutes: 10
   max_files: 5
