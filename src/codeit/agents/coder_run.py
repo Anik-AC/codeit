@@ -331,14 +331,12 @@ async def run_coder(
             )
             return CoderRun(run_id, key, branch, prepared.path, agent, outcome)
     except Exception as e:
-        if outcome is None:
+        # A run refused before its claim (wrong status, lease) changed nothing: no record.
+        if outcome is None and claimed:
             outcome = Outcome("human_review", "failed", f"CodeIt error during the run: {e}")
-            if claimed:
-                with contextlib.suppress(Exception):
-                    async with JiraClient.from_secrets(secrets) as jira:
-                        await apply_outcome(
-                            jira, ids, key, outcome, TransitionCache(ids.transitions)
-                        )
+            with contextlib.suppress(Exception):
+                async with JiraClient.from_secrets(secrets) as jira:
+                    await apply_outcome(jira, ids, key, outcome, TransitionCache(ids.transitions))
         raise
     finally:
         tokens.revoke_run(run_id)

@@ -50,3 +50,10 @@ M5 builds the Coder (PRD 11.2), the target repo steering kit and `codeit init-ta
 
 - Coder runs are the first to touch GitHub. A human still merges every PR, and `main` in the target repo is protected.
 - The one-bounce Stop hook limits how long an agent can argue with failing tests. M6's phase 1 checks are the hard gate.
+
+## Live acceptance (2026-09-25)
+
+Ticket CODEIT-72, "Show how many tasks there are" (1 point):
+
+1. **First run:** `pr_opened`, 45 turns, about 2 minutes on `claude-sonnet-5`. It opened [codeit-sandbox-app#3](https://github.com/Anik-AC/codeit-sandbox-app/pull/3) with a `TaskCount` component, unit tests and a Playwright test. CI was green, and the ticket moved to Agent Review with `PR URL` set.
+2. **Rework:** after a review comment asking for "You have N tasks", the ticket was sent back and a second run returned `pr_updated` (29 turns). It loaded the `address-feedback` skill and pushed one commit, `CODEIT-72: address review: ...`, to the **same** PR. CI was green again.

@@ -377,6 +377,7 @@ async def test_refuses_wrong_status_and_releases_lease(cfg: Config, jira: respx.
         await run_coder(cfg, SECRETS, IDS, KEY, sandbox=FakeSandbox([]), echo=lambda _: None)  # type: ignore[arg-type]
     assert LeaseStore(db.make_engine(cfg.db_path)).holder(KEY) is None
     assert not jira.routes[0].called
+    assert runs(cfg) == []  # a refused run is not recorded as a failure
 
 
 async def test_refuses_leased_ticket(cfg: Config) -> None:
