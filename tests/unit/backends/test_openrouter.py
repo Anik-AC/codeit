@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -16,7 +18,7 @@ from codeit.backends.base import (
     parse_json_text,
 )
 from codeit.backends.openrouter_chat import OpenRouterChat, reset_dead_models
-from codeit.backends.registry import chat_backend, chat_route, openrouter_key
+from codeit.backends.registry import chat_backend, chat_route
 from codeit.config import Secrets, load_config
 from tests.conftest import REPO_ROOT
 
@@ -184,19 +186,44 @@ def test_parse_json_text() -> None:
         parse_json_text("nothing here")
 
 
-def test_registry_routes_and_keys() -> None:
+@pytest.fixture
+def clean_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No .env in the cwd and no model or key variables in the environment."""
+    monkeypatch.chdir(tmp_path)
+    for var in list(os.environ):
+        if var.startswith(("OPENROUTER_", "OPENCODE_")):
+            monkeypatch.delenv(var)
+    return tmp_path
+
+
+def test_registry_routes(clean_env: Path) -> None:
     cfg = load_config(REPO_ROOT / "config" / "config.yaml")
-    secrets = Secrets(
-        _env_file=None,
-        openrouter_key_ops="ops",  # type: ignore[arg-type]
-        openrouter_key_reviewer="rev",  # type: ignore[arg-type]
-    )
+    secrets = Secrets(_env_file=None, openrouter_api_key="one-key")  # type: ignore[arg-type]
     primary, fallback = chat_route(cfg, secrets, "planner")
     assert primary.name == "claude_code_chat"
     assert isinstance(fallback, OpenRouterChat)
     assert fallback.models == cfg.models["openrouter_free"]
-    assert openrouter_key(secrets, "planner") == "ops"
-    assert openrouter_key(secrets, "reviewer") == "rev"
-    assert openrouter_key(secrets, "coder") is None
+    assert fallback._api_key == "one-key"
     with pytest.raises(ValueError, match="not a chat backend"):
         chat_backend("opencode_paid", cfg, secrets, "coder")
+
+
+def test_registry_uses_models_from_env(clean_env: Path) -> None:
+    (clean_env / ".env").write_text("OPENROUTER_MODELS_FREE=x/one:free, y/two:free\n")
+    cfg = load_config(REPO_ROOT / "config" / "config.yaml")
+    _, fallback = chat_route(cfg, Secrets(_env_file=None), "planner")
+    assert isinstance(fallback, OpenRouterChat)
+    assert fallback.models == ["x/one:free", "y/two:free"]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"openrouter_api_key": "a", "openrouter_key_reviewer": "b"}, "a"),
+        ({"openrouter_key_reviewer": "b"}, "b"),  # older .env files still work
+        ({"openrouter_key_ops": "c"}, "c"),
+        ({}, None),
+    ],
+)
+def test_single_openrouter_key(values: dict[str, str], expected: str | None) -> None:
+    assert Secrets(_env_file=None, **values).openrouter_key() == expected  # type: ignore[arg-type]

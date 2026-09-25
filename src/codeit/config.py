@@ -207,10 +207,24 @@ class Secrets(BaseSettings):
     github_token_agent: SecretStr | None = None
     github_token_readonly: SecretStr | None = None
     claude_code_oauth_token: SecretStr | None = None
+    # One OpenRouter key for every role (ADR-0008). The per-role names below still work
+    # as fallbacks for older .env files.
+    openrouter_api_key: SecretStr | None = None
     openrouter_key_reviewer: SecretStr | None = None
     openrouter_key_ops: SecretStr | None = None
     openrouter_key_coder: SecretStr | None = None
     codeit_api_token: SecretStr | None = None
+
+    def openrouter_key(self) -> str | None:
+        for key in (
+            self.openrouter_api_key,
+            self.openrouter_key_reviewer,
+            self.openrouter_key_ops,
+            self.openrouter_key_coder,
+        ):
+            if key is not None and key.get_secret_value():
+                return key.get_secret_value()
+        return None
 
 
 def _format_validation_error(err: ValidationError) -> str:

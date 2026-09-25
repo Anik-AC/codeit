@@ -74,11 +74,24 @@ def main(
 @config_app.command("validate")
 def config_validate(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
     """Validate config.yaml and report every problem found."""
+    from codeit.model_env import effective_models, env_var_for
+
     cfg = _load(config)
+    try:
+        models = effective_models(cfg)
+    except ConfigError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
     typer.echo(
         f"OK: {config} (project {cfg.project.jira_project_key}, "
         f"target repo {cfg.project.target_repo.name})"
     )
+    for name, chosen in models.items():
+        source = "from .env" if chosen != cfg.models[name] else "default"
+        shown = ", ".join(chosen) if isinstance(chosen, list) else chosen
+        typer.echo(f"  {name} ({env_var_for(name)}, {source}): {shown}")
+    if not Secrets().openrouter_key():
+        typer.echo("  note: no OpenRouter key in .env; OpenRouter backends are disabled")
 
 
 # db -------------------------------------------------------------------------------------------
