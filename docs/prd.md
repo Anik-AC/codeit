@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.2 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0004)
+**Status:** Draft v1.3 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0006)
 **Date:** 2026-09-25
 
 ---
@@ -723,6 +723,8 @@ Before any transition, the orchestrator re-reads the ticket and verifies the exp
 ```
 codeit up                      # run everything
 codeit jira doctor|discover
+codeit mcp serve [--stdio]       # jira-mcp: HTTP with run tokens, or stdio for the owner
+codeit mcp token|revoke          # mint or revoke run tokens by hand (the orchestrator does this from M7)
 codeit plan <file> [--dry-run]
 codeit run <role> [KEY]        # one-off run
 codeit sandbox build|gc
@@ -746,6 +748,7 @@ codeit agents                  # show instances
 | `eval_runs` | `id`, `suite`, `config_name`, `steering_sha`, `model`, `started_at`, `ended_at`, `summary_json` |
 | `eval_results` | `eval_run_id`, `task_id`, `repeat_idx`, `passed`, `hidden_pass_ratio`, `turns`, `cost_usd`, `duration_s`, `diff_lines`, `reviewer_verdict`, `notes` |
 | `signals` | `id`, `source`, `ticket_key`, `pr`, `author`, `text`, `theme`, `lesson`, `used_in_learning_run` |
+| `mcp_tokens` | `token_hash` (SHA-256, PK), `role`, `ticket_key`, `run_id`, `created_at`, `expires_at`, `revoked_at` (Section 15, ADR-0006) |
 
 ## 14. API (FastAPI)
 
@@ -768,7 +771,7 @@ codeit agents                  # show instances
 
 ## 15. jira-mcp server
 
-**Package:** `mcp_servers/jira/`. Python, built on the official MCP SDK (FastMCP). Wraps `jira_client`.
+**Package:** `mcp_servers/jira/`. Python, built on the official MCP SDK (v2, where FastMCP is named `MCPServer`). Wraps `jira_client`.
 
 **Where it runs:** on the host, never in a worker container. It is the only component besides the orchestrator that holds the Jira token (ADR-0004).
 
@@ -776,11 +779,13 @@ codeit agents                  # show instances
 - **streamable HTTP** on `127.0.0.1:8765` (bind address configurable, see 10.3). This is the path for worker containers. Every request needs a bearer run token.
 - **stdio**, for the owner's interactive use from Claude Code or Claude Desktop on the host. Runs as role `human`, set by `CODEIT_ROLE` in the host environment. There is no network listener, so no token is needed.
 
+**Entry points:** `codeit mcp serve` (HTTP) and the flag-free console script `codeit-jira-mcp` (stdio). The script switches to the CodeIt checkout (`CODEIT_HOME`) first, so clients can start it from any directory. The HTTP listener's host, port and allowed `Host` headers (DNS rebinding protection) come from `mcp:` in `config.yaml`.
+
 **Run tokens (HTTP):**
 - **Minted by the orchestrator** when it launches an agent run that needs Jira: 32 random bytes, URL-safe encoded.
 - **Bound to** `{role, ticket_key, run_id}`. The server reads role and ticket from the token, never from anything the container sends.
 - **Short-lived:** expires at the role's wall-clock timeout (10.3) plus 5 minutes, and is revoked when the run ends, whatever the outcome.
-- **Stored hashed** (SHA-256) in the server's token registry. The plaintext exists only in the run's `/run/mcp.json`, as an `Authorization: Bearer` header.
+- **Stored hashed** (SHA-256) in the `mcp_tokens` table, so the orchestrator and a separately started server share them. The plaintext exists only in the run's `/run/mcp.json`, as an `Authorization: Bearer` header.
 - **Rejection:** a missing, unknown, expired or revoked token gets HTTP 401. The event is logged with the `run_id` if known.
 
 **Tools** (typed inputs; outputs are markdown text plus structured content):
@@ -1009,6 +1014,7 @@ rebase: { poll_minutes: 10, max_files: 5 }
 docs: { run_at: "07:00" }
 learning: { cron: "0 22 * * SUN", min_new_signals: 10 }
 eval: { regression_tolerance: 0.05 }
+mcp: { host: 127.0.0.1, port: 8765, allowed_hosts: ["127.0.0.1:*", "localhost:*"], token_grace_minutes: 5 }
 ```
 
 The owner fills in model IDs at M3 and M6 from OpenRouter's current catalog.

@@ -17,8 +17,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | Milestone | State |
 |---|---|
 | M0 Scaffold | Done |
-| M1 Jira client | In review |
-| M2 to M13 | Planned (see PRD section 23) |
+| M1 Jira client | Done |
+| M2 jira-mcp | In review |
+| M3 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -70,6 +71,55 @@ Commands for later milestones (`plan`, `run`, `sandbox`, `up`, `eval`, ...) are 
 
    Rerun `discover` after changing fields, statuses or work types in Jira.
 
+## jira-mcp
+
+The MCP server agents use to read tickets and comment. It runs on the host and holds the Jira token. What a caller sees depends on its role:
+
+| Role | Tools |
+|---|---|
+| human (you, over stdio) | all six: `get_ticket`, `get_comments`, `search_tickets`, `add_comment`, `create_issue`, `link_issues` |
+| planner | all but `add_comment` |
+| learning | `get_ticket`, `get_comments`, `search_tickets` |
+| coder, reviewer, rebase | `get_ticket`, `get_comments`, `add_comment` (own ticket only) |
+| docs | `get_ticket`, `get_comments` |
+
+No role can change a ticket's status. Keys and searches are limited to the configured project.
+
+**Use it from interactive Claude Code** (stdio, role `human`). Run this once, from any directory:
+
+```bash
+claude mcp add codeit-jira --scope user -- ~/projects/codeit/.venv/bin/codeit-jira-mcp
+```
+
+Then ask Claude something like "get ticket CODEIT-2". Set `CODEIT_ROLE` in the server's environment to try another role, for example `claude mcp add ... -e CODEIT_ROLE=coder -- ...`.
+
+**Smoke test with the MCP Inspector** (`-e` must come after the command):
+
+```bash
+npx @modelcontextprotocol/inspector --cli ~/projects/codeit/.venv/bin/codeit-jira-mcp --method tools/list
+npx @modelcontextprotocol/inspector --cli ~/projects/codeit/.venv/bin/codeit-jira-mcp \
+  --method tools/call --tool-name get_ticket --tool-arg key=CODEIT-2
+npx @modelcontextprotocol/inspector --cli ~/projects/codeit/.venv/bin/codeit-jira-mcp \
+  -e CODEIT_ROLE=coder --method tools/list        # shows only the coder's three tools
+npx @modelcontextprotocol/inspector ~/projects/codeit/.venv/bin/codeit-jira-mcp   # browser UI
+```
+
+**HTTP with run tokens** (the path worker containers use from M4). Every request needs a bearer token bound to one role, one run and usually one ticket. Until the orchestrator mints them (M7), you can do it by hand:
+
+```bash
+uv run codeit mcp serve                     # http://127.0.0.1:8765/mcp (config: mcp:)
+TOKEN=$(uv run codeit mcp token --role coder --ticket CODEIT-2)
+cat > /tmp/mcp.json <<JSON
+{"mcpServers": {"codeit-jira": {"type": "http", "url": "http://127.0.0.1:8765/mcp",
+  "headers": {"Authorization": "Bearer $TOKEN"}}}}
+JSON
+claude -p "Use get_ticket for CODEIT-2 and give me its summary" \
+  --mcp-config /tmp/mcp.json --strict-mcp-config --allowedTools mcp__codeit-jira__get_ticket
+uv run codeit mcp revoke <run-id>           # the run ID is printed by `mcp token`
+```
+
+Tokens expire with the role's sandbox timeout plus `mcp.token_grace_minutes`. Only their SHA-256 is stored, in `data/codeit.db`.
+
 ## Development
 
 ```bash
@@ -79,7 +129,8 @@ uv run pytest                     # unit tests; live tests are skipped
 LIVE=1 uv run pytest -m live      # hits real Jira / GitHub / OpenRouter
 
 Live Jira tests create issues labeled `codeit-live-test` and delete them afterwards. They need
-the Jira setup above.
+the Jira setup above. The jira-mcp live test also runs one short `claude -p` call on your
+subscription (skipped if `claude` is not installed).
 ```
 
 **Schema changes:** edit `src/codeit/db/models.py`, then run `uv run alembic revision --autogenerate -m "..."`. `tests/unit/test_db.py` fails if the models and migrations drift apart.
@@ -89,9 +140,10 @@ the Jira setup above.
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
+| `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
-| `mcp_servers/jira/` | jira-mcp server (M2) |
+| `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
 | `prompts/`, `templates/` | Agent prompts and the target repo steering kit |
 | `sandbox/` | Worker image and egress proxy |
 | `evals/` | Eval suites and rubrics |

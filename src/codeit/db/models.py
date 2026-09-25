@@ -152,3 +152,21 @@ class Signal(Base):
     theme: Mapped[str | None] = mapped_column(String(32))
     lesson: Mapped[str | None] = mapped_column(Text)
     used_in_learning_run: Mapped[str | None] = mapped_column(String(26))
+
+
+class McpToken(Base):
+    """Per-run bearer tokens for the host-side jira-mcp server (PRD 15, ADR-0004).
+
+    Only the SHA-256 of the token is stored; the plaintext exists once, in the run's
+    `/run/mcp.json`.
+    """
+
+    __tablename__ = "mcp_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32))
+    ticket_key: Mapped[str | None] = mapped_column(String(32))
+    run_id: Mapped[str] = mapped_column(String(26), index=True)
+    created_at: Mapped[datetime]
+    expires_at: Mapped[datetime] = mapped_column(index=True)
+    revoked_at: Mapped[datetime | None]

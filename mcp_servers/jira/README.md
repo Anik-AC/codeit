@@ -1,3 +1,12 @@
 # jira-mcp
 
-FastMCP server exposing `jira_client` tools to agents. Runs on the host and is the only holder of the Jira token besides the orchestrator. Worker containers connect over streamable HTTP with a short-lived run token bound to their role and ticket. The owner uses stdio for interactive sessions. See PRD 15 and ADR-0004. Built in **M2**.
+The MCP server that gives agents Jira access. It runs on the host and is the only holder of the Jira token besides the orchestrator (PRD 15, ADR-0004, ADR-0006).
+
+| Module | Contents |
+|---|---|
+| `server.py` | `JiraMCP`: role filtering, run-token verifier |
+| `tools.py` | The six tools and their scoping rules |
+| `roles.py` | Which tools each role sees |
+| `app.py` | Entry points: `serve_http`, `serve_stdio`, the `codeit-jira-mcp` script |
+
+Usage is in the main [README](../../README.md#jira-mcp).
