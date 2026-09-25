@@ -60,7 +60,8 @@ sandbox:
     - pypi.org
     - files.pythonhosted.org
     - playwright.azureedge.net
-    - "<site>.atlassian.net"
+    # The Jira site is deliberately absent: containers reach Jira only via the
+    # host-side jira-mcp (PRD 15, ADR-0004).
 
 rebase:
   poll_minutes: 10
