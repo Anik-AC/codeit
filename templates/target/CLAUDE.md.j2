@@ -1,0 +1,59 @@
+# {{ project_name }}
+
+Instructions for AI agents (and humans) working in this repository. CodeIt's Coder reads
+this file on every run, so keep it short and true.
+
+## Project overview
+
+<!-- Replace with two or three sentences: what the product does, who uses it, and the
+main parts of the code. -->
+
+## Stack and commands
+
+| Task | Command |
+|---|---|
+| Install | `{{ commands.install }}` |
+| Lint | `{{ commands.lint }}` |
+| Type check | `{{ commands.typecheck }}` |
+| Unit tests | `{{ commands.unit }}` |
+| End-to-end tests | `{{ commands.e2e }}` |
+
+Run lint, type check and unit tests before every commit. Run the end-to-end tests that
+cover what you changed before opening or updating a pull request.
+
+## Code conventions
+
+<!-- Replace with the conventions that matter here: layout, naming, error handling,
+how the API validates input. -->
+
+## Testing conventions
+
+- Every acceptance criterion maps to at least one test. Name tests after the behaviour
+  they check.
+- Unit tests live next to the code they test, or under `tests/unit/`.
+- Playwright tests use role-based locators (`getByRole`, `getByLabel`), never CSS or XPath
+  selectors that depend on layout.
+- No sleeps or fixed timeouts. Use web-first assertions (`await expect(locator)...`).
+- A new test must fail without your change. If it passes on the old code, it tests
+  nothing.
+
+## Git conventions
+
+- Branch: `{KEY}-{short-slug}`, for example `CODEIT-12-add-due-dates`.
+- Commit messages: `{KEY}: what changed`, for example `CODEIT-12: validate due dates`.
+- One pull request per ticket. On rework, push to the same branch; never open a second PR.
+
+## Definition of done
+
+- Every acceptance criterion is implemented and has a test.
+- Lint, type check, unit and end-to-end tests pass locally.
+- The pull request uses the template and fills in every section.
+
+## Never
+
+- Edit CI configuration (`.github/`), or this file's hooks in `.claude/`, unless the ticket
+  asks for it.
+- Disable, skip or delete tests to make a build pass.
+- Commit secrets, `.env` files or credentials.
+- Change lockfiles unless you added or removed a dependency.
+- Approve npm install scripts for new dependencies without a stated reason.
