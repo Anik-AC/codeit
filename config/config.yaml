@@ -26,7 +26,12 @@ routing:
   ops:      { primary: openrouter_free }
 
 models:
-  openrouter_free: ["<free-model-1>:free", "<free-model-2>:free", "<free-model-3>:free"]
+  # Free models with structured-output support, from openrouter.ai/api/v1/models (2026-09-25).
+  # Free IDs rotate: dead ones (404) are skipped for 24 hours. Review these when they stop working.
+  openrouter_free:
+    - nvidia/nemotron-3-super-120b-a12b:free
+    - qwen/qwen3.8-27b:free
+    - nex-agi/nex-n2.5-pro:free
   openrouter_paid_review: ["<cheap-non-anthropic-coding-model>"]
   openrouter_paid_cheap: ["<cheap-model>"]
   opencode_paid: "openrouter/<cheap-coding-model>"

@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.3 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0006)
+**Status:** Draft v1.4 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0007)
 **Date:** 2026-09-25
 
 ---
@@ -370,7 +370,7 @@ claude -p "<prompt>" --output-format stream-json --verbose \
   - the first implementation logs the raw message the first time a limit is hit, so the patterns can be confirmed
   - parse the reset time if present; otherwise default to 5 hours from the first failure
   - on detection, return `usage_limited` and set the backend to `parked(until=reset_at)`
-- **Also usable in chat mode:** for Planner and Learning, a `claude -p` call with no tools, `--max-turns 1` and a JSON-only instruction. This runs on the host, not in a container, because there are no tools.
+- **Also usable in chat mode:** for Planner and Learning, a `claude -p` call with no tools (`--tools ""`), `--json-schema` for validated structured output and `--max-turns 3` (structured output takes two turns). This runs on the host, not in a container, because there are no tools. `ANTHROPIC_API_KEY` is removed from its environment so it always uses the subscription (ADR-0007).
 
 **`opencode`** (agentic, fallback)
 
@@ -380,11 +380,11 @@ claude -p "<prompt>" --output-format stream-json --verbose \
 
 **`openrouter_chat`** (chat)
 
-- OpenAI Python SDK with `base_url=https://openrouter.ai/api/v1`.
+- Direct `httpx` calls to `https://openrouter.ai/api/v1/chat/completions` (the OpenAI SDK 3.x cannot be mocked with respx; ADR-0007).
 - Passes a `models` fallback list.
 - Requests usage accounting so each response reports its cost.
 - Uses JSON-schema structured output where the model supports it. Otherwise it instructs JSON-only output and validates with Pydantic, retrying once on a validation error.
-- Uses **one API key per role** (`OPENROUTER_KEY_REVIEWER`, `OPENROUTER_KEY_OPS`, and so on), each with a credit limit set on the OpenRouter dashboard.
+- Uses **one API key per role** (`OPENROUTER_KEY_REVIEWER`, `OPENROUTER_KEY_CODER`; planner, docs, learning and ops share `OPENROUTER_KEY_OPS`), each with a credit limit set on the OpenRouter dashboard.
 
 ### 9.3 Routing table (config, not code)
 
@@ -487,7 +487,7 @@ class Agent(Protocol):
 
 ### 11.1 Planner
 
-- **Trigger:** manual, `codeit plan <path/to/plan.md> [--epic "Name"] [--dry-run]`.
+- **Trigger:** manual, `codeit plan <path/to/plan.md> [--epic "Name"|KEY] [--dry-run] [--repo PATH]`. `codeit plan data/plans/<run>.json` creates a saved dry run exactly as shown, without calling the model again (ADR-0007).
 - **Inputs:**
   - the plan markdown
   - the target repo's `CLAUDE.md`
@@ -519,7 +519,8 @@ class Agent(Protocol):
      - create the Epic and Stories in `Agent Draft` with label `agent-draft`
      - render the description from a template: user story, acceptance criteria as a checklist, technical notes, test plan, suggested points
      - create "is blocked by" links from `depends_on`
-  4. With `--dry-run`: print a table and write `data/plans/{run_id}.json`.
+  4. Always print a table and write `data/plans/{run_id}.json`. With `--dry-run`, create nothing.
+  5. If any Jira write fails, delete every issue this run created.
 - **Does not set:** story points or priority. The human sets those.
 - **Acceptance:** a sample plan with 5 or more features produces valid tickets with working links. The dry-run output matches what gets created.
 
@@ -1073,7 +1074,7 @@ codeit/
   - `httpx`, `pydantic` v2
   - `sqlalchemy` 2 + `alembic`
   - `typer`, `structlog`, `docker` (SDK), `jinja2`
-  - `openai` (for OpenRouter), `mcp` (official SDK)
+  - `markdown-it-py` (ADF), `mcp` (official SDK). OpenRouter is called with `httpx`.
   - `python-ulid`
 - **Git operations:** through a `git.py` subprocess wrapper, not GitPython.
 - **Dashboard:** Next.js App Router, TypeScript strict, Tailwind, shadcn/ui, `EventSource` for SSE, TanStack Query for fetches.

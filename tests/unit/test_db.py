@@ -43,6 +43,17 @@ def test_upgrade_records_version_and_is_rerunnable(tmp_path: Path) -> None:
     assert version == ScriptDirectory.from_config(db.alembic_config(path)).get_current_head()
 
 
+def test_upgrade_repairs_database_without_version(tmp_path: Path) -> None:
+    """Databases made before the env.py fix have 0001 tables but no alembic_version row."""
+    path = tmp_path / "codeit.db"
+    db.upgrade(path, "0001")
+    with db.make_engine(path).begin() as conn:
+        conn.execute(text("DELETE FROM alembic_version"))
+    db.upgrade(path)
+    names = set(inspect(db.make_engine(path)).get_table_names())
+    assert "mcp_tokens" in names
+
+
 def test_migrations_match_models(tmp_path: Path) -> None:
     path = tmp_path / "codeit.db"
     db.upgrade(path)

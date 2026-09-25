@@ -18,8 +18,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 |---|---|
 | M0 Scaffold | Done |
 | M1 Jira client | Done |
-| M2 jira-mcp | In review |
-| M3 to M13 | Planned (see PRD section 23) |
+| M2 jira-mcp | Done |
+| M3 Planner | In review |
+| M4 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -120,6 +121,24 @@ uv run codeit mcp revoke <run-id>           # the run ID is printed by `mcp toke
 
 Tokens expire with the role's sandbox timeout plus `mcp.token_grace_minutes`. Only their SHA-256 is stored, in `data/codeit.db`.
 
+## Planner
+
+Turns a plan written in markdown into one Epic and a set of small Stories in Jira, all in `Agent Draft` with the label `agent-draft`. Stories that look too big (more than 5 points, or fewer than 2 acceptance criteria) also get `split-me`. Dependencies become "blocks" links. You then set priority and points and approve each Story (PRD 6).
+
+```bash
+uv run codeit plan docs/samples/sample-plan.md --dry-run   # draft and show; creates nothing
+uv run codeit plan data/plans/<run>.json                   # create exactly that draft
+uv run codeit plan my-plan.md                              # draft and create in one go
+uv run codeit plan my-plan.md --epic CODEIT-40             # add Stories under an existing Epic
+uv run codeit plan my-plan.md --epic "Q4 work"             # name the new Epic yourself
+```
+
+- **Backends:** the Planner uses Claude Code on your subscription (`claude -p` with every tool disabled). If Claude is unavailable, for example because of a usage limit, it falls back to OpenRouter's free models. That needs `OPENROUTER_KEY_OPS` in `.env`.
+- **Repo context:** it reads the target repo's `CLAUDE.md` and file tree from `--repo` (default `data/repos/<target repo>`), and the open tickets in Jira.
+- **Saved plans:** every plan is saved in `data/plans/` and recorded in the `runs` table with its prompt hash and estimated cost.
+- **Invalid answers** are retried once with the validation errors.
+- **Failures:** if Jira rejects any write, the run deletes what it created.
+
 ## Development
 
 ```bash
@@ -129,8 +148,9 @@ uv run pytest                     # unit tests; live tests are skipped
 LIVE=1 uv run pytest -m live      # hits real Jira / GitHub / OpenRouter
 
 Live Jira tests create issues labeled `codeit-live-test` and delete them afterwards. They need
-the Jira setup above. The jira-mcp live test also runs one short `claude -p` call on your
-subscription (skipped if `claude` is not installed).
+the Jira setup above. The jira-mcp and Planner live tests also call `claude -p` on your
+subscription (skipped if `claude` is not installed); the Planner test creates a full plan in
+Jira and deletes it.
 ```
 
 **Schema changes:** edit `src/codeit/db/models.py`, then run `uv run alembic revision --autogenerate -m "..."`. `tests/unit/test_db.py` fails if the models and migrations drift apart.
@@ -140,11 +160,13 @@ subscription (skipped if `claude` is not installed).
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
+| `src/codeit/agents/` | Agents: `planner.py` (draft, plan, apply), `planner_run.py` (`codeit plan`) |
+| `src/codeit/backends/` | Model adapters: Claude Code chat mode, OpenRouter, routing |
+| `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
 | `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
-| `prompts/`, `templates/` | Agent prompts and the target repo steering kit |
 | `sandbox/` | Worker image and egress proxy |
 | `evals/` | Eval suites and rubrics |
 | `dashboard/` | Next.js dashboard (M8) |

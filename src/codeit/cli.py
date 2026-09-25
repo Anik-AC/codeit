@@ -259,12 +259,60 @@ def mcp_revoke(run_id: str, config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
 
 @app.command("plan")
 def plan(
-    file: Path,
-    epic: Annotated[str | None, typer.Option("--epic")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    file: Annotated[
+        Path,
+        typer.Argument(
+            help="A plan in markdown, or a saved plan (data/plans/<run>.json) to apply.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ],
+    epic: Annotated[
+        str | None,
+        typer.Option("--epic", help="Name for the new Epic, or an existing Epic key."),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Draft and save the plan; create nothing.")
+    ] = False,
+    repo: Annotated[
+        Path | None,
+        typer.Option("--repo", help="Target repo checkout. Default: data/repos/<target repo>."),
+    ] = None,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    ids: IdsPath = DEFAULT_IDS_PATH,
 ) -> None:
-    """Turn a plan markdown file into Jira tickets."""
-    _not_implemented("M3")
+    """Turn a plan into an Epic and Stories in Agent Draft (PRD 11.1)."""
+    from codeit.agents.planner import PlannerError
+    from codeit.agents.planner_run import apply_saved, run_planner
+    from codeit.jira_client.discover import load_ids
+
+    cfg = _load(config)
+    try:
+        jira_ids = load_ids(ids)
+        if file.suffix == ".json":
+            if dry_run or epic:
+                typer.echo("--dry-run and --epic apply only to markdown plans.", err=True)
+                raise typer.Exit(code=2)
+            asyncio.run(apply_saved(cfg, Secrets(), jira_ids, file, echo=typer.echo))
+            return
+        outcome = asyncio.run(
+            run_planner(
+                cfg,
+                Secrets(),
+                jira_ids,
+                file,
+                dry_run=dry_run,
+                epic=epic,
+                repo_path=repo,
+                echo=typer.echo,
+            )
+        )
+    except (PlannerError, JiraError, FileNotFoundError) as e:
+        typer.echo(f"Planner failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"\nSaved {outcome.path}")
+    if dry_run:
+        typer.echo(f"Nothing created. To create exactly this: codeit plan {outcome.path}")
 
 
 @app.command("run")
