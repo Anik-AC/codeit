@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.4 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0007)
+**Status:** Draft v1.5 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0009)
 **Date:** 2026-09-25
 
 ---
@@ -357,7 +357,7 @@ Runs inside the worker container:
 
 ```
 claude -p "<prompt>" --output-format stream-json --verbose \
-  --max-turns N --mcp-config /run/mcp.json \
+  --max-turns N --mcp-config /run/codeit/mcp.json \
   --allowedTools "<list>" --append-system-prompt "<text>" \
   --dangerously-skip-permissions
 ```
@@ -366,7 +366,8 @@ claude -p "<prompt>" --output-format stream-json --verbose \
 - **`--dangerously-skip-permissions`** is permitted **only** inside worker containers.
 - **Streaming:** stream-json lines are parsed as they arrive. Every event is forwarded to the orchestrator event bus (for the dashboard) and appended to `data/transcripts/{run_id}.jsonl`.
 - **Usage-limit detection:**
-  - patterns come from config (`claude.usage_limit_patterns`)
+  - Claude Code's `rate_limit_event` (status, exact `resetsAt`, utilization) is the primary signal; a failed run whose last event is not `allowed` parks until `resetsAt` (ADR-0009)
+  - patterns from config (`claude.usage_limit_patterns`) are the fallback
   - the first implementation logs the raw message the first time a limit is hit, so the patterns can be confirmed
   - parse the reset time if present; otherwise default to 5 hours from the first failure
   - on detection, return `usage_limited` and set the backend to `parked(until=reset_at)`
@@ -384,7 +385,7 @@ claude -p "<prompt>" --output-format stream-json --verbose \
 - Passes a `models` fallback list.
 - Requests usage accounting so each response reports its cost.
 - Uses JSON-schema structured output where the model supports it. Otherwise it instructs JSON-only output and validates with Pydantic, retrying once on a validation error.
-- Uses **one API key per role** (`OPENROUTER_KEY_REVIEWER`, `OPENROUTER_KEY_CODER`; planner, docs, learning and ops share `OPENROUTER_KEY_OPS`), each with a credit limit set on the OpenRouter dashboard.
+- Uses **one API key for every role** (`OPENROUTER_API_KEY`). Per-role spending is capped by the budget guard (9.4). Model lists can be overridden from `.env` with `OPENROUTER_MODELS_<NAME>` (ADR-0008).
 
 ### 9.3 Routing table (config, not code)
 
@@ -398,7 +399,7 @@ claude -p "<prompt>" --output-format stream-json --verbose \
 | learning | `claude_code` (chat mode) | `openrouter_chat` (cheap paid) | Weekly |
 | ops | `openrouter_chat` (free list) | n/a | Comment classification, summaries |
 
-Model IDs live in `config.yaml`. Free model IDs rotate, so the config holds an ordered list and the backend tries them in order. On a 404 for a model, it marks that model dead for 24 hours.
+Default model IDs live in `config.yaml`; `.env` overrides them (`OPENROUTER_MODELS_<NAME>`, `OPENCODE_MODEL`, `CLAUDE_MODEL`; ADR-0008). Free model IDs rotate, so the config holds an ordered list and the backend tries them in order. On a 404 for a model, it marks that model dead for 24 hours.
 
 ### 9.4 Budget guard
 
@@ -419,7 +420,7 @@ Model IDs live in `config.yaml`. Free model IDs rotate, so the config holds an o
 ### 10.1 Image (`sandbox/Dockerfile`)
 
 - **Base:** the official Playwright image (Node LTS + browsers).
-- **Adds:** Python 3.12, `git`, `gh`, `jq`, Claude Code CLI, OpenCode CLI. jira-mcp is **not** installed in the image; it runs on the host (Section 15).
+- **Adds:** `gh`, `jq`, `uv`, Claude Code CLI, OpenCode CLI (pinned build args; Python 3.12 and git come with the base). jira-mcp is **not** installed in the image; it runs on the host (Section 15). Details in ADR-0009.
 - **Non-root user:** `agent`, UID 1000.
 - **Tag:** `codeit-worker:{version}`. Built by `codeit sandbox build`.
 
@@ -442,7 +443,7 @@ Uses the Python Docker SDK.
 
 - **Mounts:**
   - the worktree read-write at `/workspace`
-  - a per-run directory at `/run` (MCP config with the run's jira-mcp token, prompt file, outputs)
+  - a per-run directory at `/run/codeit` (MCP config with the run's jira-mcp token, prompt file, outputs)
   - nothing else from the host
 - **Environment:** only role-required variables (Section 19).
 - **Limits:**
@@ -453,7 +454,7 @@ Uses the Python Docker SDK.
   - **allowlist:** `api.anthropic.com`, `claude.ai`, `console.anthropic.com`, `openrouter.ai`, `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `registry.npmjs.org`, `pypi.org`, `files.pythonhosted.org`, Playwright CDN hosts
   - the list lives in config
   - **The Jira site host is not on the allowlist.** Containers have no Jira credential and no route to Jira. Their only path to Jira is the host jira-mcp endpoint (Section 15).
-  - **Host reachability:** the jira-mcp listener must be reachable from the sandbox network and from nowhere wider (not the LAN). The exact bind address and container-side hostname (for example `host.docker.internal`) under Docker Desktop + WSL2 are verified in M4 and recorded in an ADR.
+  - **Host reachability:** jira-mcp binds to 127.0.0.1 on the host (not the LAN); containers reach it as `http://host.docker.internal:8765/mcp`. Verified on Docker Desktop + WSL2 in M4 (ADR-0009).
   - **Fallback if the proxy is deferred:** M4 may start with an unrestricted network, but the proxy must land before M7 is complete.
 - **Teardown:** containers are removed after the run. Logs are kept.
 
@@ -728,7 +729,7 @@ codeit mcp serve [--stdio]       # jira-mcp: HTTP with run tokens, or stdio for 
 codeit mcp token|revoke          # mint or revoke run tokens by hand (the orchestrator does this from M7)
 codeit plan <file> [--dry-run]
 codeit run <role> [KEY]        # one-off run
-codeit sandbox build|gc
+codeit sandbox build|smoke|gc
 codeit eval run --suite golden --config <name> [--repeats 3]
 codeit eval report [--compare a,b]
 codeit budget                  # show budget state
@@ -1031,9 +1032,10 @@ GITHUB_TOKEN_AGENT=
 GITHUB_TOKEN_READONLY=
 # Passed into coder and rebase containers (accepted risk, Section 19.7).
 CLAUDE_CODE_OAUTH_TOKEN=
-OPENROUTER_KEY_REVIEWER=
-OPENROUTER_KEY_OPS=
-OPENROUTER_KEY_CODER=
+OPENROUTER_API_KEY=                 # one key for every role (ADR-0008)
+# Optional model overrides (ADR-0008):
+# OPENROUTER_MODELS_FREE= OPENROUTER_MODELS_PAID_REVIEW= OPENROUTER_MODELS_PAID_CHEAP=
+# OPENCODE_MODEL= CLAUDE_MODEL=
 CODEIT_API_TOKEN=
 ```
 
@@ -1051,7 +1053,7 @@ codeit/
 │   ├── backends/             # base.py claude_code.py opencode.py openrouter_chat.py
 │   ├── jira_client/
 │   ├── github_client/
-│   ├── sandbox/              # docker.py clone.py
+│   ├── sandbox/              # containers.py clone.py runner.py gc.py
 │   ├── db/                   # models.py, alembic/
 │   └── evals/                # runner.py scorers.py report.py
 ├── mcp_servers/jira/

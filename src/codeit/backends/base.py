@@ -1,7 +1,4 @@
-"""Backend interface shared by all model adapters (PRD 9.1).
-
-M3 needs chat backends only; the agentic side (`run_agentic`) lands with the sandbox in M4.
-"""
+"""Backend interface shared by all model adapters (PRD 9.1)."""
 
 from __future__ import annotations
 
@@ -46,6 +43,43 @@ class Availability:
     state: Literal["ok", "parked", "disabled"]
     until: datetime | None = None
     reason: str = ""
+
+
+AgenticStatus = Literal["completed", "max_turns", "timeout", "usage_limited", "error"]
+
+
+@dataclass(frozen=True)
+class AgenticRequest:
+    """One agent run inside a worker container (PRD 9.1)."""
+
+    prompt: str
+    run_id: str
+    container_id: str
+    workdir: str = "/workspace"
+    system_append: str = ""
+    max_turns: int = 80
+    tools: list[str] = field(
+        default_factory=lambda: ["Read", "Edit", "Write", "Bash", "Glob", "Grep"]
+    )
+    allowed_tools: list[str] = field(default_factory=list)  # e.g. mcp__codeit-jira__get_ticket
+    mcp_config_path: str | None = None  # a path inside the container
+    timeout_s: float = 3600
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class AgenticResult:
+    status: AgenticStatus
+    final_message: str
+    transcript_path: str
+    turns: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+    reset_at: datetime | None = None
+    model: str | None = None
+    # The last `rate_limit_event` Claude Code reported: status, resetsAt, utilization.
+    rate_limit: dict[str, Any] | None = None
 
 
 class BackendError(Exception):

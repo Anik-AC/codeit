@@ -13,12 +13,12 @@ from codeit.backends.base import ChatBackend
 from codeit.backends.claude_code import ClaudeCodeChat
 from codeit.backends.openrouter_chat import OpenRouterChat
 from codeit.config import Config, Role, Secrets
-from codeit.model_env import effective_models
+from codeit.model_env import claude_model, effective_models
 
 
 def chat_backend(name: str, cfg: Config, secrets: Secrets, role: Role) -> ChatBackend:
     if name == "claude_code_chat":
-        return ClaudeCodeChat(cfg.claude.usage_limit_patterns)
+        return ClaudeCodeChat(cfg.claude.usage_limit_patterns, model=claude_model())
     models = effective_models(cfg).get(name)
     if isinstance(models, list):
         return OpenRouterChat(name, models, secrets.openrouter_key())

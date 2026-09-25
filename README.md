@@ -19,8 +19,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M0 Scaffold | Done |
 | M1 Jira client | Done |
 | M2 jira-mcp | Done |
-| M3 Planner | In review |
-| M4 to M13 | Planned (see PRD section 23) |
+| M3 Planner | Done |
+| M4 Sandbox + Claude backend | In review |
+| M4.5 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -139,6 +140,37 @@ uv run codeit plan my-plan.md --epic "Q4 work"             # name the new Epic y
 - **Invalid answers** are retried once with the validation errors.
 - **Failures:** if Jira rejects any write, the run deletes what it created.
 
+## Models and keys
+
+- **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
+- **Model lists:** the defaults are in `config/config.yaml` under `models:`. To change them, for price or to compare models, set these in `.env`:
+
+  ```bash
+  OPENROUTER_MODELS_PAID_REVIEW=vendor/model-a,vendor/model-b   # tried in order
+  OPENROUTER_MODELS_FREE=...          # also _PAID_CHEAP
+  OPENCODE_MODEL=openrouter/vendor/coder-model
+  CLAUDE_MODEL=claude-opus-5-5        # unset: Claude Code's default
+  ```
+
+- `uv run codeit config validate` shows which model each list uses, and whether it comes from `.env`.
+
+## Worker sandbox
+
+Agents that change code run in Docker containers built from `sandbox/Dockerfile`. The image is Playwright 1.63 plus `gh`, `jq`, `uv`, Claude Code and OpenCode, running as user `agent` (UID 1000).
+- **Mounts:** each container sees only its ticket's clone at `/workspace` and its run directory at `/run/codeit`.
+- **Hardening:** every capability is dropped, and there are no new privileges.
+- **Credentials:** only those of its role. Never a Jira token; containers reach Jira through jira-mcp at `host.docker.internal` with a run token.
+
+```bash
+uv run codeit sandbox build     # build codeit-worker:<version> (tag from sandbox.image)
+uv run codeit sandbox smoke     # run claude -p in a container; checks the token and Docker
+uv run codeit sandbox gc        # remove clones of Done/Rejected tickets and clones over 14 days old
+```
+
+`sandbox smoke` needs `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (from `claude setup-token`). Transcripts go to `data/transcripts/<run>.jsonl` and container logs to `data/logs/containers/`. Per-ticket clones live in `data/worktrees/<repo>/<KEY>`, made from the mirror in `data/repos/<repo>`.
+
+Until M7 adds the egress proxy, containers have unrestricted network access, so only run tickets you wrote.
+
 ## Development
 
 ```bash
@@ -161,13 +193,14 @@ Jira and deletes it.
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
 | `src/codeit/agents/` | Agents: `planner.py` (draft, plan, apply), `planner_run.py` (`codeit plan`) |
-| `src/codeit/backends/` | Model adapters: Claude Code chat mode, OpenRouter, routing |
+| `src/codeit/backends/` | Model adapters: Claude Code (chat on the host, agentic in containers), OpenRouter, routing, parking |
+| `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
 | `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
-| `sandbox/` | Worker image and egress proxy |
+| `sandbox/` | Worker image (`Dockerfile`); egress proxy in M7 |
 | `evals/` | Eval suites and rubrics |
 | `dashboard/` | Next.js dashboard (M8) |
 | `docs/` | PRD, ADRs, work log |

@@ -113,8 +113,13 @@ class McpConfig(_Strict):
 
     host: str = "127.0.0.1"
     port: Annotated[int, Field(ge=1, le=65535)] = 8765
-    # Host header values accepted (DNS rebinding protection). M4 adds the name containers use.
-    allowed_hosts: list[str] = Field(default_factory=lambda: ["127.0.0.1:*", "localhost:*"])
+    # Host header values accepted (DNS rebinding protection).
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1:*", "localhost:*", "host.docker.internal:*"]
+    )
+    # How worker containers address the host. Docker Desktop (and Linux Docker with the
+    # host-gateway mapping the sandbox adds) resolves this to the host (ADR-0009).
+    container_host: str = "host.docker.internal"
     # Grace period added to the role's sandbox timeout when a run token is minted.
     token_grace_minutes: PositiveInt = 5
 

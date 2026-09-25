@@ -1,4 +1,5 @@
-"""Claude Code backend (PRD 9.2). M3 implements chat mode; agentic mode lands in M4.
+"""Claude Code backend, chat mode on the host (PRD 9.2). Agentic mode, which runs inside
+worker containers, is in `claude_code_agent.py`.
 
 Chat mode runs `claude -p` on the host with every tool disabled, no MCP servers, no saved
 session, and an empty working directory (so no project CLAUDE.md is loaded). The prompt
@@ -9,8 +10,8 @@ It runs on the owner's Claude login (the subscription). `ANTHROPIC_API_KEY` and
 `ANTHROPIC_AUTH_TOKEN` are removed from the child environment so the CLI can never
 switch to pay-per-token API billing.
 
-`--dangerously-skip-permissions` is never used here; it is allowed only in worker
-containers (PRD 19.6), and a unit test checks this module never passes it.
+The permission-bypass flag is never used here; it is allowed only in worker containers
+(PRD 19.6), and a unit test checks this module never mentions it.
 """
 
 from __future__ import annotations
@@ -42,6 +43,24 @@ DEFAULT_PARK = timedelta(hours=5)
 _EPOCH = re.compile(r"\|(\d{10})\b")
 
 
+class UsageLimits:
+    """Recognizes Claude's usage-limit messages and when the limit resets (PRD 9.2)."""
+
+    def __init__(self, patterns: Sequence[str]) -> None:
+        self._patterns = [re.compile(re.escape(p), re.IGNORECASE) for p in patterns]
+
+    def matches(self, message: str) -> bool:
+        return any(p.search(message) for p in self._patterns)
+
+    @staticmethod
+    def reset_time(message: str) -> datetime:
+        """The `|<epoch>` reset time if the message has one, else 5 hours from now."""
+        m = _EPOCH.search(message)
+        if m:
+            return datetime.fromtimestamp(int(m.group(1)), UTC)
+        return datetime.now(UTC) + DEFAULT_PARK
+
+
 class ClaudeCodeChat:
     name = "claude_code_chat"
     kind: Literal["chat"] = "chat"
@@ -57,7 +76,7 @@ class ClaudeCodeChat:
         self.binary = binary
         self.model = model
         self.max_turns = max_turns
-        self._patterns = [re.compile(re.escape(p), re.IGNORECASE) for p in usage_limit_patterns]
+        self._limits = UsageLimits(usage_limit_patterns)
         self._parked_until: datetime | None = None
 
     async def available(self) -> Availability:
@@ -124,8 +143,8 @@ class ClaudeCodeChat:
         failed = not reply or reply.get("is_error") or reply.get("subtype") != "success"
         if failed:
             message = text or err.strip() or out.strip() or "no output"
-            if any(p.search(message) for p in self._patterns):
-                until = _reset_time(message)
+            if self._limits.matches(message):
+                until = self._limits.reset_time(message)
                 self._parked_until = until
                 log.warning("claude.usage_limited", raw=message[:500], until=until.isoformat())
                 raise BackendUnavailable(f"{self.name}: usage limit ({message[:200]})", until=until)
@@ -144,7 +163,7 @@ class ClaudeCodeChat:
             text=text if data is None else json.dumps(data),
             data=data,
             backend=self.name,
-            model=_model_name(reply) or self.model,
+            model=model_name(reply) or self.model,
             input_tokens=_sum(
                 usage, "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
             ),
@@ -166,14 +185,7 @@ def _transcript(messages: list[Any]) -> str:
     return "\n\n".join(parts)
 
 
-def _reset_time(message: str) -> datetime:
-    m = _EPOCH.search(message)
-    if m:
-        return datetime.fromtimestamp(int(m.group(1)), UTC)
-    return datetime.now(UTC) + DEFAULT_PARK
-
-
-def _model_name(reply: dict[str, Any]) -> str | None:
+def model_name(reply: dict[str, Any]) -> str | None:
     """The model that wrote the answer: Claude Code may also use a small helper model, so
     pick the one with the most output tokens."""
     usage = reply.get("modelUsage")
