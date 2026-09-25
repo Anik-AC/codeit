@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.5 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0010)
+**Status:** Draft v1.6 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0011)
 **Date:** 2026-09-25
 
 ---
@@ -552,12 +552,13 @@ class Agent(Protocol):
   - `.claude/skills/*`
   - `.claude/agents/*`
   - hooks in `.claude/settings.json`
-- **Allowed tools:** Read, Edit, Write, Bash, Glob, Grep, plus jira-mcp read tools.
+- **Allowed tools:** Read, Edit, Write, Bash, Glob, Grep, Skill, TodoWrite, plus the jira-mcp tools for its role (`get_ticket`, `get_comments`, `add_comment`).
+- **Manual run:** `codeit run coder KEY` starts jira-mcp for the run if none is listening; `codeit run coder --file ticket.md` runs without Jira and only commits (ADR-0011).
 - **Result handling (orchestrator):**
 
 | Coder result | Orchestrator action |
 |---|---|
-| `pr_opened` / `pr_updated` | Verify via GitHub that the PR exists and the head SHA changed. Set `PR URL`, add a remote link, transition to `Agent Review`. |
+| `pr_opened` / `pr_updated` | Verify via GitHub that an open PR exists for the branch and its head SHA changed during the run; if not, treat as `failed`. Set `PR URL`, add a remote link, transition to `Agent Review`. |
 | `failed` / `blocked` / `max_turns` / `timeout` | Comment with the agent's notes plus a transcript excerpt. Add `needs-human`, transition to `Human Review`. |
 | `usage_limited` | Release the lease, transition back to `Ready for Dev`, comment "parked until {reset_at}", park the backend. |
 
@@ -857,7 +858,7 @@ Templates live in `templates/target/`. `codeit init-target <path>` copies them i
 - runs the unit suite
 - if tests fail, exits with code 2 and writes the failure summary to stderr, so Claude continues working
 - **must check `stop_hook_active` in the hook input and exit 0 when it is true**, to avoid endless loops
-- behavior verified against current Claude Code hook docs in M5, with any difference recorded in an ADR
+- behavior verified with Claude Code 2.1.282 in M5: it blocks once, then `stop_hook_active` lets Claude stop (ADR-0011)
 
 ### 16.4 `codeit.yaml` (in the target repo)
 

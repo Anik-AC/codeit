@@ -1,0 +1,9 @@
+# How CodeIt's agents build and check this repo (CodeIt PRD 16.4).
+commands:
+  install: {{ commands.install | tojson }}
+  lint: {{ commands.lint | tojson }}
+  typecheck: {{ commands.typecheck | tojson }}
+  unit: {{ commands.unit | tojson }}
+  e2e: {{ commands.e2e | tojson }}
+test_globs: {{ test_globs | tojson }}
+never_auto_rebase: ["**/migrations/**", "package-lock.json", ".github/**"]

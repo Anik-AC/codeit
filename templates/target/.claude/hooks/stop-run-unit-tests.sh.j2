@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Stop hook (CodeIt PRD 16.3): refuse to finish while unit tests fail.
+# Exit 2 sends stderr back to Claude and keeps it working. When Claude is already
+# continuing because of this hook (stop_hook_active), let it stop, to avoid a loop.
+set -uo pipefail
+
+input="$(cat)"
+if [ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false')" = "true" ]; then
+  exit 0
+fi
+
+cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
+if output="$({{ commands.unit }} 2>&1)"; then
+  exit 0
+fi
+
+{
+  echo "Unit tests are failing, so the work is not done. Fix them before finishing."
+  echo "Command: {{ commands.unit }}"
+  echo "Last lines of output:"
+  printf '%s\n' "$output" | tail -n 40
+} >&2
+exit 2

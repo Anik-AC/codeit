@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -37,6 +38,32 @@ def build_http_server(jira: JiraContext, cfg: Config, store: RunTokenStore) -> u
     return uvicorn.Server(
         uvicorn.Config(app, host=cfg.mcp.host, port=cfg.mcp.port, log_level="warning")
     )
+
+
+def port_in_use(host: str, port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
+@asynccontextmanager
+async def running_http_server(
+    jira: JiraContext, cfg: Config, store: RunTokenStore
+) -> AsyncIterator[bool]:
+    """Run jira-mcp over HTTP for the duration of the block, unless one already listens
+    on the configured port (e.g. `codeit mcp serve`). Yields whether it started one."""
+    if port_in_use(cfg.mcp.host, cfg.mcp.port):
+        yield False
+        return
+    server = build_http_server(jira, cfg, store)
+    task = asyncio.create_task(server.serve())
+    while not server.started and not task.done():  # noqa: ASYNC110 - uvicorn exposes a flag
+        await asyncio.sleep(0.05)
+    try:
+        yield True
+    finally:
+        server.should_exit = True
+        await task
 
 
 async def serve_http(cfg: Config, ids_path: Path) -> None:

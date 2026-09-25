@@ -54,6 +54,7 @@ def write_mcp_config(run_dir: Path, cfg: Config, token: str) -> str:
             }
         }
     }
+    run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / "mcp.json"
     path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     path.chmod(0o600)
