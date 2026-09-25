@@ -35,6 +35,8 @@ async def test_discover_collects_ids(site: FakeSite, client: JiraClient) -> None
     assert ids.fields.story_points == "customfield_10016"
     assert ids.fields.agent == CUSTOM["Agent"]  # project-scoped wins over another project's
     assert ids.statuses["Human Review"] == "6"
+    assert ids.statuses["Done"] == "7"  # the Story's, not the Epic's
+    assert "In Progress" not in ids.statuses
     assert ids.issue_type_id("story") == STORY_ID
     assert ids.transitions["Done"] == "25"
 

@@ -46,11 +46,22 @@ async def get_project(client: JiraClient, project_key: str) -> ProjectInfo:
     )
 
 
+# CodeIt moves only Stories through the lifecycle (PRD 6.1), so statuses and transitions
+# come from the Story workflow. Other work types may keep a different workflow.
+LIFECYCLE_TYPE = "Story"
+
+
+def newest_jql(project_key: str) -> str:
+    return f'project = {project_key} AND issuetype = "{LIFECYCLE_TYPE}" ORDER BY created DESC'
+
+
 async def get_statuses(client: JiraClient, project_key: str) -> dict[str, str]:
-    """Status name -> ID across all issue types of the project."""
+    """Status name -> ID in the Story workflow."""
     raw = await client.get_json(f"{API}/project/{project_key}/statuses")
     out: dict[str, str] = {}
     for issue_type in raw:
+        if str(issue_type.get("name", "")).casefold() != LIFECYCLE_TYPE.casefold():
+            continue
         for status in issue_type.get("statuses") or []:
             out.setdefault(str(status["name"]), str(status["id"]))
     return out
@@ -87,10 +98,8 @@ def _scope_project(f: dict[str, Any]) -> str | None:
 
 
 async def sample_transitions(client: JiraClient, project_key: str) -> dict[str, str]:
-    """Transition IDs from the newest issue in the project; empty if it has no issues."""
-    async for issue in search(
-        client, f"project = {project_key} ORDER BY created DESC", ["status"], max_results=1
-    ):
+    """Transition IDs from the newest Story; empty if there are none."""
+    async for issue in search(client, newest_jql(project_key), ["status"], max_results=1):
         return {t.to_status: t.id for t in await list_transitions(client, issue["key"])}
     return {}
 

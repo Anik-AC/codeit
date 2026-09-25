@@ -17,7 +17,7 @@ _Metrics appear here once the Docs agent runs (M11)._
 | Milestone | State |
 |---|---|
 | M0 Scaffold | Done |
-| M1 Jira client | In review (live checks pending) |
+| M1 Jira client | In review |
 | M2 to M13 | Planned (see PRD section 23) |
 
 ## Requirements

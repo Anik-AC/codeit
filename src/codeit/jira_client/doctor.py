@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from codeit.jira_client.client import API, JiraAuthError, JiraClient, JiraError, JiraNotFound
-from codeit.jira_client.discover import get_project, get_statuses, resolve_fields
+from codeit.jira_client.discover import get_project, get_statuses, newest_jql, resolve_fields
 from codeit.jira_client.issues import IssueSpec, create_issue, delete_issue
 from codeit.jira_client.models import REQUIRED_ISSUE_TYPES, REQUIRED_STATUSES
 from codeit.jira_client.search import search
@@ -154,9 +154,7 @@ async def run_doctor(
 
 
 async def _newest_issue(client: JiraClient, project_key: str) -> str | None:
-    async for issue in search(
-        client, f"project = {project_key} ORDER BY created DESC", ["status"], max_results=1
-    ):
+    async for issue in search(client, newest_jql(project_key), ["status"], max_results=1):
         return str(issue["key"])
     return None
 
@@ -168,7 +166,7 @@ async def _check_transitions(
         return Check(
             "transitions",
             True,
-            "skipped: the project has no issues to sample (run with --write-test)",
+            "skipped: the project has no Stories to sample (run with --write-test)",
         )
     issue = await client.get_json(f"{API}/issue/{key}", params={"fields": "status"})
     current = str(issue["fields"]["status"]["name"])

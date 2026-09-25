@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -80,7 +81,12 @@ class FakeSite:
 
     def _statuses(self, request: httpx.Request) -> httpx.Response:
         statuses = [{"id": str(i), "name": n} for i, n in enumerate(self.statuses, 1)]
-        return httpx.Response(200, json=[{"name": "Story", "statuses": statuses}])
+        # Epics keep Jira's default workflow; its statuses must not leak into the result.
+        epic = [{"id": "90", "name": "In Progress"}, {"id": "91", "name": "Done"}]
+        return httpx.Response(
+            200,
+            json=[{"name": "Epic", "statuses": epic}, {"name": "Story", "statuses": statuses}],
+        )
 
     def _meta(self, request: httpx.Request) -> httpx.Response:
         start = int(request.url.params.get("startAt", 0))
@@ -89,6 +95,7 @@ class FakeSite:
         return httpx.Response(200, json={"fields": page, "total": len(fields)})
 
     def _search(self, request: httpx.Request) -> httpx.Response:
+        assert 'issuetype = "Story"' in json.loads(request.content)["jql"]
         return httpx.Response(200, json={"issues": [{"key": k} for k in self.issues[:1]]})
 
     def _transitions(self, request: httpx.Request) -> httpx.Response:

@@ -27,6 +27,8 @@ PRD 7.2 and 7.3 describe `jira_client` and the doctor and discover commands. Bui
 
 **Fields are resolved by name, preferring project scope.** Team-managed projects scope custom fields to one project, so a field scoped to this project beats a global field with the same name. Two candidates at the same level are reported as ambiguous. Story points match either "Story point estimate" (team-managed) or "Story Points".
 
+**Statuses and transitions come from the Story workflow only.** CodeIt moves only Stories through the lifecycle (PRD 6.1). Epics, Tasks and Subtasks may keep Jira's default workflow, as they do on the owner's site. Discovery reads statuses for the Story work type, and discover and doctor sample the newest Story for transitions.
+
 **Doctor checks more than PRD 7.3 lists:**
 - the Epic and Story work types exist
 - each custom field is on the Story work type, not just on the site
@@ -39,4 +41,4 @@ It lives in `doctor.py`.
 ## Consequences
 
 - New runtime dependency: `markdown-it-py`.
-- The first `LIVE=1` run is the real check for ADF acceptance by Jira, link direction and transitions. Any difference found is fixed in `jira_client` and noted here.
+- The first `LIVE=1` run (2026-09-25) passed all 6 live tests. That confirms Jira accepts the ADF, the link direction, transitions to every status, custom field writes and token paging. It also exposed that sampling any work type picked a Subtask on the default workflow, which led to the Story-only rule above.
