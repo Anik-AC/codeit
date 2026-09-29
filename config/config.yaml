@@ -32,7 +32,8 @@ models:
     - nvidia/nemotron-3-super-120b-a12b:free
     - qwen/qwen3.8-27b:free
     - nex-agi/nex-n2.5-pro:free
-  openrouter_paid_review: ["<cheap-non-anthropic-coding-model>"]
+  # The Reviewer: a non-Anthropic model (PRD 9.3), chosen by the owner on 2026-09-29.
+  openrouter_paid_review: ["deepseek/deepseek-v4.1-flash"]
   openrouter_paid_cheap: ["<cheap-model>"]
   opencode_paid: "openrouter/<cheap-coding-model>"
 

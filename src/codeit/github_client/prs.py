@@ -125,3 +125,12 @@ async def check_runs(gh: GitHubClient, repo: str, sha: str) -> list[CheckRun]:
         CheckRun(name=r["name"], status=r["status"], conclusion=r.get("conclusion"))
         for r in data.get("check_runs") or []
     ]
+
+
+async def post_review(gh: GitHubClient, repo: str, number: int, body_md: str) -> str:
+    """Post a PR review with event COMMENT. REQUEST_CHANGES is refused on your own PRs when
+    CodeIt uses the owner's token, so the verdict goes in the body (PRD 8). Returns its URL."""
+    data = await gh.post_json(
+        f"/repos/{repo}/pulls/{number}/reviews", {"body": body_md, "event": "COMMENT"}
+    )
+    return str(data.get("html_url", ""))

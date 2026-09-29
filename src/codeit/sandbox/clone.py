@@ -111,6 +111,23 @@ class CloneManager:
                 return Prepared(path, branch, False, conflict=True, head=await self._head(path))
         return Prepared(path, branch, created=False, head=await self._head(path))
 
+    async def prepare_review(self, key: str, sha: str) -> Path:
+        """A clone at exactly `sha` for the Reviewer, apart from the Coder's clone, so a
+        review never sees or changes the Coder's working state."""
+        await self.refresh_mirror()
+        path = self.clones / f"{key}-review"
+        if not (path / ".git").is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            await self.git.run("clone", "--no-checkout", str(self.mirror), str(path))
+            await self.git.run("remote", "set-url", "origin", self.remote_url, cwd=path)
+        await self._set_identity(path)
+        await self.git.run("fetch", "origin", cwd=path)
+        await self.git.run("fetch", "origin", sha, cwd=path)
+        await self.git.run("checkout", "--force", "--detach", sha, cwd=path)
+        await self.git.run("clean", "-fd", cwd=path)
+        return path
+
     async def _set_identity(self, path: Path) -> None:
         """Commits made here, including host-side rebases, are the bot's (PRD D5)."""
         await self.git.run("config", "user.name", BOT_NAME, cwd=path)

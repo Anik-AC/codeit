@@ -345,12 +345,12 @@ def run(
     ids: IdsPath = DEFAULT_IDS_PATH,
 ) -> None:
     """Run one agent once on a ticket."""
+    if role == "reviewer":
+        _run_reviewer(key, config, ids)
+        return
     if role != "coder":
-        _not_implemented(
-            {"reviewer": "M6", "rebase": "M10", "docs": "M11", "learning": "M12"}.get(
-                role, "later milestones"
-            )
-        )
+        later = {"rebase": "M10", "docs": "M11", "learning": "M12"}
+        _not_implemented(later.get(role, "later milestones"))
     from codeit.agents.coder_run import CoderError, run_coder, run_coder_local
     from codeit.jira_client.discover import load_ids
     from codeit.sandbox.containers import SandboxError
@@ -381,6 +381,27 @@ def run(
     typer.echo(f"workspace: {outcome.workspace}")
     if outcome.outcome.status not in ("pr_opened", "pr_updated", "committed"):
         raise typer.Exit(code=1)
+
+
+def _run_reviewer(key: str | None, config: Path, ids: Path) -> None:
+    from codeit.agents.reviewer.run import ReviewerError, run_reviewer
+    from codeit.jira_client.discover import load_ids
+    from codeit.sandbox.containers import SandboxError
+
+    if key is None:
+        typer.echo("Give a ticket KEY.", err=True)
+        raise typer.Exit(code=2)
+    cfg = _load(config)
+    try:
+        jira_ids = load_ids(ids)
+        result = asyncio.run(run_reviewer(cfg, Secrets(), jira_ids, key.upper(), echo=typer.echo))
+    except (ReviewerError, JiraError, SandboxError, FileNotFoundError) as e:
+        typer.echo(f"Reviewer failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"verdict: {result.verdict.verdict if result.verdict else 'incomplete'}")
+    typer.echo(f"route: {result.routing.route} ({result.routing.reason})")
+    if result.review_url:
+        typer.echo(f"review: {result.review_url}")
 
 
 @sandbox_app.command("build")
