@@ -31,6 +31,8 @@ class TargetConfig(BaseModel):
 
     commands: TargetCommands
     test_globs: list[str] = Field(default_factory=list)
+    # Which test files the e2e command runs; the other test files run with `unit`.
+    e2e_globs: list[str] = Field(default_factory=lambda: ["e2e/**"])
     never_auto_rebase: list[str] = Field(default_factory=list)
 
 

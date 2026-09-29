@@ -22,6 +22,9 @@ NEEDS_HUMAN = "needs-human"
 
 # Orchestrator comments end with this marker, so rework feedback can leave them out.
 ORCHESTRATOR_MARK = "_(CodeIt orchestrator)_"
+# The Reviewer signs its PR reviews and Jira comments with this. Its Jira comment is rework
+# feedback; its PR review repeats it, so the Coder skips the PR copy.
+REVIEWER_MARK = "_(CodeIt reviewer"
 # Comments agents post through jira-mcp are signed like this (mcp_servers/jira/tools.py).
 _OWN_SIGNATURES = ("_Posted by coder (run", "_Posted by rebase (run")
 
@@ -78,7 +81,7 @@ def feedback_items(jira: list[Comment], pr: list[PRComment]) -> list[str]:
         if not is_own_comment(c.body_md):
             items.append((c.created, f"Jira comment by {c.author}: {c.body_md.strip()}"))
     for p in pr:
-        if is_own_comment(p.body):
+        if is_own_comment(p.body) or (p.kind == "review" and REVIEWER_MARK in p.body):
             continue
         where = f" on {p.path}:{p.line}" if p.path else ""
         label = {

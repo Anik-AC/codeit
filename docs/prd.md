@@ -1,8 +1,8 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.6 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0011)
-**Date:** 2026-09-25
+**Status:** Draft v1.7 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0012)
+**Date:** 2026-09-29
 
 ---
 
@@ -600,6 +600,11 @@ class Agent(Protocol):
 ```
 
 - **Verdict override:** any Phase 1 failure among `unit`, `e2e`, `typecheck` and `new_tests_fail_on_base` forces `fail_critical`, whatever the LLM said.
+- **Implementation notes (ADR-0012):**
+  - `install` also blocks. A failed `lint` is a major finding. `ci_status` never forces the verdict.
+  - `new_tests_fail_on_base` checks out the PR's merge base rather than `origin/main`.
+  - The PR review is posted with event `COMMENT`, never `APPROVE` or `REQUEST_CHANGES`.
+  - Model: `deepseek/deepseek-v4.1-flash`, changeable in `.env`.
 - **Actions:**
   1. post a PR review (summary, acceptance-criteria table, findings, check table)
   2. post a Jira comment with the same content in condensed form

@@ -22,8 +22,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M3 Planner | Done |
 | M4 Sandbox + Claude backend | Done |
 | M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | Done |
-| M5 Coder | In review |
-| M6 to M13 | Planned (see PRD section 23) |
+| M5 Coder | Done |
+| M6 Reviewer | In review |
+| M7 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -168,6 +169,29 @@ uv run codeit init-target ~/projects/my-app   # CLAUDE.md, .claude/skills/*, .cl
 
 Then fill in the placeholder sections of `CLAUDE.md` and commit. The Stop hook runs the unit tests and refuses to let the agent finish while they fail. The edit hook lints each changed file.
 
+## Reviewer
+
+Reviews the PR of a ticket in `Agent Review` (PRD 11.3, ADR-0012):
+
+```bash
+uv run codeit run reviewer CODEIT-12
+```
+
+What a run does:
+
+1. **Phase 1, checks:** runs the target's `codeit.yaml` commands in a worker container on the PR head: install, lint, typecheck, unit, e2e.
+   - **`new_tests_fail_on_base`:** runs the PR's new or changed tests against the code from before the PR. At least one must fail. If they all pass, the tests don't test the change (`TESTS_DO_NOT_EXERCISE_CHANGE`).
+   - **CI:** then it waits up to 10 minutes for GitHub CI.
+2. **Phase 2, model review:** one call to a non-Anthropic model (default `deepseek/deepseek-v4.1-flash`) with the ticket, the diff and the check results. It returns a verdict (`pass`, `pass_with_notes` or `fail_critical`), acceptance-criteria coverage and findings.
+3. **Override:** a failed install, typecheck, unit, e2e or `new_tests_fail_on_base` forces `fail_critical`, whatever the model said.
+4. **Output:** posts a PR review (a comment, never an approval) and a shorter Jira comment.
+5. **Routing:**
+   - A pass goes to `Human Review`.
+   - A `fail_critical` goes back to `Ready for Dev` with `Review Loop` + 1, so the Coder reworks it.
+   - The 3rd failure goes to `Human Review` with `needs-human`.
+
+It needs `GITHUB_TOKEN_AGENT` (to post the review), `GITHUB_TOKEN_READONLY`, `OPENROUTER_API_KEY` and the worker image. The review checklist the model follows is in `prompts/reviewer/checklist.md`.
+
 ## Models and keys
 
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
@@ -230,11 +254,11 @@ Jira and deletes it.
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
-| `src/codeit/agents/` | Agents: `planner.py` and `planner_run.py` (`codeit plan`); `coder.py` and `coder_run.py` (`codeit run coder`) |
+| `src/codeit/agents/` | Agents: `planner.py` and `planner_run.py` (`codeit plan`); `coder.py` and `coder_run.py` (`codeit run coder`); `reviewer/` (`codeit run reviewer`) |
 | `src/codeit/backends/` | Model adapters: Claude Code (chat on the host, agentic in containers), OpenRouter, routing, parking |
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
-| `src/codeit/github_client/` | GitHub REST: PRs, feedback, check runs |
+| `src/codeit/github_client/` | GitHub REST: PRs, feedback, check runs, PR reviews |
 | `src/codeit/orchestrator/` | Leases (the scheduler loop lands in M7) |
 | `src/codeit/target.py` | The target repo's `codeit.yaml` |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |

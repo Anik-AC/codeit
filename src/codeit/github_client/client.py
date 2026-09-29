@@ -80,6 +80,19 @@ class GitHubClient:
             raise GitHubError(message, resp.status_code)
         raise AssertionError("unreachable")
 
+    async def post_json(self, url: str, body: Any) -> Any:
+        """One POST, no retries: GitHub writes are not idempotent."""
+        try:
+            resp = await self._http.post(url, json=body)
+        except httpx.TransportError as e:
+            raise GitHubError(f"POST {url}: {e}") from e
+        if resp.status_code >= 400:
+            message = f"POST {url} -> {resp.status_code}: {_message(resp)}"
+            if resp.status_code == 404:
+                raise GitHubNotFound(message, 404)
+            raise GitHubError(message, resp.status_code)
+        return resp.json()
+
     async def get_json(self, url: str, params: Mapping[str, Any] | None = None) -> Any:
         return (await self._get(url, params)).json()
 
