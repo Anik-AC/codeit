@@ -329,9 +329,58 @@ def plan(
 
 
 @app.command("run")
-def run(role: str, key: Annotated[str | None, typer.Argument()] = None) -> None:
-    """Run one agent once, optionally on a ticket KEY."""
-    _not_implemented("M5 and later")
+def run(
+    role: Annotated[str, typer.Argument(help="Agent role, e.g. coder.")],
+    key: Annotated[str | None, typer.Argument(help="Ticket key, e.g. CODEIT-12.")] = None,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file",
+            help="Coder only: a ticket in markdown; runs locally, no Jira.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    ids: IdsPath = DEFAULT_IDS_PATH,
+) -> None:
+    """Run one agent once on a ticket."""
+    if role != "coder":
+        _not_implemented(
+            {"reviewer": "M6", "rebase": "M10", "docs": "M11", "learning": "M12"}.get(
+                role, "later milestones"
+            )
+        )
+    from codeit.agents.coder_run import CoderError, run_coder, run_coder_local
+    from codeit.jira_client.discover import load_ids
+    from codeit.sandbox.containers import SandboxError
+    from codeit.sandbox.runner import MissingSecret
+
+    cfg = _load(config)
+    try:
+        if file is not None:
+            outcome = asyncio.run(
+                run_coder_local(cfg, Secrets(), file, key or "LOCAL-1", echo=typer.echo)
+            )
+        elif key is None:
+            typer.echo("Give a ticket KEY, or --file for a local run.", err=True)
+            raise typer.Exit(code=2)
+        else:
+            outcome = asyncio.run(
+                run_coder(cfg, Secrets(), load_ids(ids), key.upper(), echo=typer.echo)
+            )
+    except (CoderError, JiraError, MissingSecret, SandboxError, FileNotFoundError) as e:
+        typer.echo(f"Coder failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"status: {outcome.outcome.status}")
+    if outcome.outcome.pr_url:
+        typer.echo(f"pr: {outcome.outcome.pr_url}")
+    if outcome.agent is not None:
+        a = outcome.agent
+        typer.echo(f"turns: {a.turns}, model: {a.model}, transcript: {a.transcript_path}")
+    typer.echo(f"workspace: {outcome.workspace}")
+    if outcome.outcome.status not in ("pr_opened", "pr_updated", "committed"):
+        raise typer.Exit(code=1)
 
 
 @sandbox_app.command("build")
@@ -409,9 +458,24 @@ def sandbox_gc(
 
 
 @app.command("init-target")
-def init_target(path: Path) -> None:
-    """Copy the steering kit into a target repo without overwriting files."""
-    _not_implemented("M5")
+def init_target_cmd(
+    path: Annotated[Path, typer.Argument(help="The target repo checkout.", file_okay=False)],
+    name: Annotated[str | None, typer.Option("--name", help="Project name for CLAUDE.md.")] = None,
+) -> None:
+    """Copy the steering kit (CLAUDE.md, skills, hooks) into a target repo. Never overwrites."""
+    from codeit.init_target import init_target
+
+    try:
+        result = init_target(path, project_name=name)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=1) from e
+    for rel in result.created:
+        typer.echo(f"created  {rel}")
+    for rel in result.skipped:
+        typer.echo(f"exists   {rel} (left unchanged)")
+    if result.created:
+        typer.echo("Fill in the placeholder sections of CLAUDE.md, then commit.")
 
 
 @app.command("up")
