@@ -353,15 +353,18 @@ def run(
         typer.Option("--any-time", help="Rebase: let Claude resolve conflicts outside its window."),
     ] = False,
 ) -> None:
-    """Run one agent once on a ticket."""
+    """Run one agent once on a ticket (docs takes no ticket: it writes up everything new)."""
     if role == "reviewer":
         _run_reviewer(key, config, ids)
         return
     if role == "rebase":
         _run_rebase(key, config, ids, any_time)
         return
+    if role == "docs":
+        _run_docs(config, ids)
+        return
     if role != "coder":
-        later = {"docs": "M11", "learning": "M12"}
+        later = {"learning": "M12"}
         _not_implemented(later.get(role, "later milestones"))
     from codeit.agents.coder_run import CoderError, run_coder, run_coder_local
     from codeit.jira_client.discover import load_ids
@@ -393,6 +396,23 @@ def run(
     typer.echo(f"workspace: {outcome.workspace}")
     if outcome.outcome.status not in ("pr_opened", "pr_updated", "committed"):
         raise typer.Exit(code=1)
+
+
+def _run_docs(config: Path, ids: Path) -> None:
+    from codeit.agents.docs import DocsError, run_docs
+    from codeit.jira_client.discover import load_ids
+
+    cfg = _load(config)
+    try:
+        result = asyncio.run(run_docs(cfg, Secrets(), load_ids(ids), echo=typer.echo))
+    except (DocsError, JiraError, FileNotFoundError) as e:
+        typer.echo(f"Docs failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    if not result.shipped:
+        typer.echo("Nothing new to write up.")
+        return
+    typer.echo(f"tickets: {', '.join(result.shipped)}")
+    typer.echo(f"pr: {result.pr_url}")
 
 
 def _run_rebase(key: str | None, config: Path, ids: Path, any_time: bool) -> None:

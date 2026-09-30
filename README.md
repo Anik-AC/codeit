@@ -11,7 +11,7 @@ A local multi-agent software delivery system for personal projects:
 Jira is the state machine. See [docs/prd.md](docs/prd.md) for the full spec and [docs/adr/](docs/adr/) for decisions.
 
 <!-- codeit:status:start -->
-_Metrics appear here once the Docs agent runs (M11)._
+_The Docs agent keeps this block current in the target repo's README (see [codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)). It cannot write to this repo: its token is scoped to the sandbox (ADR-0018)._
 <!-- codeit:status:end -->
 
 ## Status
@@ -29,8 +29,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M7 Orchestrator | Done |
 | M8 API + dashboard | Done |
 | M9 Eval harness | Done |
-| M10 Rebase agent | In review |
-| M11 to M13 | Planned (see PRD section 23) |
+| M10 Rebase agent | Done |
+| M11 Docs agent | In review |
+| M12 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -239,6 +240,23 @@ uv run codeit run rebase CODEIT-83              # --any-time lets Claude resolve
   - an agent that could not finish
 - **Jira status never changes.** Conflicts outside Claude's run window wait for the window.
 
+## Docs agent
+
+Writes up what shipped, once a day (PRD 11.6, ADR-0018). `codeit up` runs it at `docs.run_at` (default 07:00). To run it now:
+
+```bash
+uv run codeit run docs
+```
+
+- **Input:** Done tickets without the `docs-logged` label, their PRs, the Reviewer's summaries and CodeIt's run costs.
+- **Model:** one Claude call (`routing.docs`, the subscription) writes a changelog line per ticket and picks out design decisions and highlights. CodeIt writes the files itself.
+- **Output:** one PR from `docs/{date}` in the target repo, with:
+  - `CHANGELOG.md` (Keep a Changelog, grouped by Epic, lines ending `(KEY, #PR)`)
+  - `docs/worklog/{date}.md` (tickets, review loops, human returns, decisions, cost per agent)
+  - `docs/adr/NNNN-*.md` for each recorded decision
+  - the README status block
+- **Afterwards:** each ticket gets the `docs-logged` label, so the next run skips it.
+
 ## Dashboard
 
 `codeit up` also serves a web dashboard and its API on http://127.0.0.1:8770 (PRD 14, ADR-0014). Build it once, and again after pulling dashboard changes:
@@ -290,6 +308,10 @@ uv run codeit eval report --compare default,other
 
 ## Models and keys
 
+- **Who uses what** (`routing:` in `config/config.yaml`):
+  - Coder, Rebase: Claude Code in containers, inside the Claude run window
+  - Planner, Docs, Learning, Ops: Claude on the host (`claude -p`, your subscription), with the free OpenRouter list as a backup
+  - Reviewer: paid OpenRouter models; it was tuned and evaluated on them
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
 - **Model lists:** the defaults are in `config/config.yaml` under `models:`. To change them, for price or to compare models, set these in `.env`:
 

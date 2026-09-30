@@ -43,6 +43,7 @@ function Runs() {
             <option value="coder">Coder</option>
             <option value="reviewer">Reviewer</option>
             <option value="rebase">Rebaser</option>
+            <option value="docs">Scribe</option>
             <option value="planner">Planner</option>
           </Select>
           <Input

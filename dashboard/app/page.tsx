@@ -19,7 +19,7 @@ import { ROLES, roleColor } from "@/lib/roles";
 import type { Agent, AgentsResponse, Budget, RunSummary, Ticket } from "@/lib/types";
 import { ago, duration, usd } from "@/lib/utils";
 
-const SECTIONS = ["coder", "reviewer", "rebase"] as const;
+const SECTIONS = ["coder", "reviewer", "rebase", "docs"] as const;
 const STATE_TEXT: Record<Agent["state"], string> = {
   busy: "Working",
   idle: "Ready",
@@ -327,7 +327,7 @@ export default function AgentsPage() {
         </CardBody>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         {SECTIONS.map((role) => (
           <Card key={role}>
             <CardHeader>

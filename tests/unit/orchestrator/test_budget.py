@@ -65,6 +65,8 @@ def test_reviewer_needs_a_key(cfg: Config, engine: Engine) -> None:
 
 
 def test_free_request_cap(cfg: Config, engine: Engine) -> None:
+    free_docs = cfg.routing["docs"].model_copy(update={"primary": "openrouter_free"})
+    cfg = cfg.model_copy(update={"routing": {**cfg.routing, "docs": free_docs}})
     b = budget(cfg, engine, datetime.now(UTC))
     record_spend(engine, backend="openrouter_free", role="docs", usd=0, requests=900)
     assert b.free_requests_today() == 900
@@ -78,3 +80,10 @@ def test_status(cfg: Config, engine: Engine) -> None:
     assert status["claude"]["window"] == ["23:00-08:00"] and status["claude"]["runs_today"] == 0
     assert status["openrouter"]["spend"]["reviewer"] == (pytest.approx(0.1), 0.5)
     assert status["openrouter"]["free_requests"] == (0, 900)
+
+
+def test_claude_chat_roles_are_not_capped(cfg: Config, engine: Engine) -> None:
+    record_spend(engine, backend="openrouter_free", role="docs", usd=5, requests=900)
+    b = budget(cfg, engine, NOON, key=False)
+    assert b.can_run("docs").ok and b.can_run("learning").ok  # Claude subscription roles
+    assert not b.can_run("reviewer").ok  # the Reviewer still needs its OpenRouter key

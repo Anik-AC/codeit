@@ -137,6 +137,11 @@ class Budget:
             if claude_running >= self.cfg.claude.max_concurrent_runs:
                 return Decision(False, "Claude concurrency limit reached")
             return Decision(True)
+        route = self.cfg.routing.get(role)
+        if route is not None and route.primary == "claude_code_chat":
+            # Short chat calls on the subscription; if Claude is usage-limited the route
+            # falls back to the free OpenRouter list, so there is nothing to refuse here.
+            return Decision(True)
         if not self._has_key:
             return Decision(False, "no OpenRouter key in .env")
         cap = self.cfg.openrouter.daily_usd_cap.get(role)
@@ -144,7 +149,6 @@ class Budget:
             spent = self.spent_today(role)
             if spent >= cap:
                 return Decision(False, f"{role} spent ${spent:.2f} of ${cap:.2f} today")
-        route = self.cfg.routing.get(role)
         if route is not None and route.primary == FREE_BACKEND:
             used = self.free_requests_today()
             if used >= self.cfg.openrouter.free_requests_daily_cap:

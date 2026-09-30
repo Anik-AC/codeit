@@ -21,6 +21,7 @@
   --coder: #fbbf24;
   --reviewer: #2dd4bf;
   --rebase: #60a5fa;
+  --docs: #bef264;
   --human: #f472b6;
   --done: #4ade80;
 
@@ -48,8 +49,8 @@
     --planner: #7c5cf0;
     --coder: #c98a04;
     --reviewer: #0d9488;
-  --rebase: #2563eb;
     --rebase: #2563eb;
+    --docs: #4d7c0f;
     --human: #db2777;
     --done: #16a34a;
     --accent: #c98a04;
@@ -99,6 +100,7 @@
   --color-coder: var(--coder);
   --color-reviewer: var(--reviewer);
   --color-rebase: var(--rebase);
+  --color-docs: var(--docs);
   --color-human: var(--human);
   --color-done: var(--done);
   --color-accent: var(--accent);
