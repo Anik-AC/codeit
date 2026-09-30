@@ -28,6 +28,7 @@ from codeit.backends.registry import chat_route
 from codeit.config import Config, Secrets
 from codeit.db.models import Run
 from codeit.jira_client import JiraClient, JiraIds
+from codeit.orchestrator.budget import record_spend
 
 Echo = Callable[[str], None]
 
@@ -103,6 +104,15 @@ def _record_run(
                 result_json=result or None,
                 error=error,
             )
+        )
+    if record is not None and record.backend != "claude_code_chat":
+        record_spend(
+            db.make_engine(cfg.db_path),
+            backend=record.backend,
+            role=ROLE,
+            usd=record.cost_usd,
+            requests=record.attempts,
+            note=f"plan {run_id}",
         )
 
 

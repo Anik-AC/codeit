@@ -127,7 +127,7 @@ async def test_git_errors_and_token_env(tmp_path: Path) -> None:
     assert await git.run("status", cwd=tmp_path, check=False) == ""
 
 
-async def test_non_conflict_rebase_error_is_raised(
+async def test_non_conflict_rebase_error_starts_over(
     manager: CloneManager, remote: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, work = remote
@@ -143,6 +143,28 @@ async def test_non_conflict_rebase_error_is_raised(
         return await real_run(*args, **kw)  # type: ignore[arg-type]
 
     monkeypatch.setattr(manager.git, "run", failing_rebase)
-    with pytest.raises(GitError, match="something else"):
-        await manager.prepare("CODEIT-10", "CODEIT-10-a")
-    assert first.path.exists()
+    again = await manager.prepare("CODEIT-10", "CODEIT-10-a")
+    assert again.created and again.path == first.path  # a fresh clone of the same branch
+
+
+async def test_broken_clone_is_recloned(manager: CloneManager, remote: tuple[Path, Path]) -> None:
+    first = await manager.prepare("CODEIT-11", "CODEIT-11-a")
+    commit(first.path, "work.txt", "w\n", "CODEIT-11: work")
+    sh("push", "origin", "CODEIT-11-a", cwd=first.path)
+    # What a crash mid-fetch left behind: a ref pointing at an object that does not exist.
+    ref = first.path / ".git" / "refs" / "remotes" / "origin" / "CODEIT-11-a"
+    ref.write_text("0123456789abcdef0123456789abcdef01234567\n")
+    again = await manager.prepare("CODEIT-11", "CODEIT-11-a")
+    assert again.created and (again.path / "work.txt").read_text() == "w\n"
+
+
+async def test_broken_mirror_is_recloned(manager: CloneManager) -> None:
+    await manager.refresh_mirror()
+    head = sh("rev-parse", "HEAD", cwd=manager.mirror)
+    # What a hard restart left behind: the object HEAD points at is an empty file.
+    obj = manager.mirror / ".git" / "objects" / head[:2] / head[2:]
+    obj.unlink()  # a new empty file: the old one is hardlinked to the "GitHub" repo
+    obj.write_bytes(b"")
+    await manager.refresh_mirror()
+    assert sh("rev-parse", "HEAD", cwd=manager.mirror) == head
+    assert sh("fsck", "--no-progress", cwd=manager.mirror) == ""

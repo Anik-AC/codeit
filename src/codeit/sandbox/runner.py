@@ -35,6 +35,11 @@ def role_env(role: str, secrets: Secrets) -> dict[str, str]:
         if token is None or not token.get_secret_value():
             raise MissingSecret("CLAUDE_CODE_OAUTH_TOKEN is not set; run `claude setup-token`")
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token.get_secret_value()
+        # Telemetry and update checks would only be refused by the egress proxy.
+        env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        # Wait for jira-mcp before the first turn; by default `-p` connects in the
+        # background and the first turn can run without the tools (ADR-0013).
+        env["MCP_CONNECTION_NONBLOCKING"] = "0"
         if secrets.github_token_agent is not None:
             env["GH_TOKEN"] = secrets.github_token_agent.get_secret_value()
     elif role == "reviewer" and secrets.github_token_readonly is not None:

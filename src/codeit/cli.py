@@ -411,14 +411,16 @@ def sandbox_build(
         Path, typer.Option("--context", help="Build context with the Dockerfile.", file_okay=False)
     ] = Path("sandbox"),
 ) -> None:
-    """Build the worker image (tag from sandbox.image in config)."""
+    """Build the worker image and the egress proxy image (tags from config)."""
     from codeit.sandbox.containers import build_image
+    from codeit.sandbox.egress import PROXY_CONTEXT
 
     cfg = _load(config)
-    code = build_image(context, cfg.sandbox.image)
-    if code != 0:
-        raise typer.Exit(code=code)
-    typer.echo(f"Built {cfg.sandbox.image}")
+    for ctx, tag in ((context, cfg.sandbox.image), (PROXY_CONTEXT, cfg.sandbox.proxy_image)):
+        code = build_image(ctx, tag)
+        if code != 0:
+            raise typer.Exit(code=code)
+        typer.echo(f"Built {tag}")
 
 
 @sandbox_app.command("smoke")
@@ -500,21 +502,87 @@ def init_target_cmd(
 
 
 @app.command("up")
-def up() -> None:
-    """Start the orchestrator, API, watchers and cron jobs."""
-    _not_implemented("M7")
+def up(
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+    ids: IdsPath = DEFAULT_IDS_PATH,
+    any_time: Annotated[
+        bool, typer.Option("--any-time", help="Ignore claude.run_window for this session.")
+    ] = False,
+) -> None:
+    """Start the orchestrator: jira-mcp, the scheduler loop and the merge watcher."""
+    from codeit.jira_client.discover import load_ids
+    from codeit.log import configure_logging
+    from codeit.orchestrator.serve import StartupError, serve
+
+    cfg = _load(config)
+    log_file = configure_logging(cfg.log_dir, console=False)
+    typer.echo(f"log: {log_file}")
+    try:
+        asyncio.run(
+            serve(
+                cfg,
+                Secrets(),
+                load_ids(ids),
+                config_path=config,
+                any_time=any_time,
+                echo=typer.echo,
+            )
+        )
+    except (StartupError, JiraConfigError, FileNotFoundError) as e:
+        typer.echo(f"Cannot start: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command("budget")
-def budget() -> None:
-    """Show backend budget state."""
-    _not_implemented("M7")
+def budget(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
+    """Show backend budget state: Claude window and parking, OpenRouter spend today."""
+    from codeit.orchestrator.budget import Budget
+
+    cfg = _load(config)
+    db.upgrade(cfg.db_path)
+    status = Budget(
+        cfg, db.make_engine(cfg.db_path), has_openrouter_key=Secrets().openrouter_key() is not None
+    ).status()
+    c = status["claude"]
+    parked = f" until {c['parked_until']:%Y-%m-%d %H:%M}" if c["parked_until"] else ""
+    typer.echo(f"Claude: {c['state']}{parked}; runs today {c['runs_today']}")
+    typer.echo(f"  window {', '.join(c['window'])} ({'open' if c['in_window'] else 'closed'} now)")
+    o = status["openrouter"]
+    typer.echo(f"OpenRouter: key {'set' if o['key'] else 'MISSING'}")
+    for role, (spent, cap) in o["spend"].items():
+        typer.echo(f"  {role:<9} ${spent:.4f} of ${cap:.2f} today")
+    used, cap = o["free_requests"]
+    typer.echo(f"  free-model requests {used} of {cap} today")
 
 
 @app.command("agents")
-def agents() -> None:
-    """Show agent instances and their state."""
-    _not_implemented("M7")
+def agents(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
+    """Show agent instances, their state and the tickets they hold."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from codeit.db.models import AgentInstance, Run
+    from codeit.orchestrator.leases import LeaseStore
+
+    cfg = _load(config)
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
+    with Session(engine) as s:
+        rows = list(s.scalars(select(AgentInstance).order_by(AgentInstance.name)))
+        if not rows:
+            typer.echo("No agent instances yet; they appear once `codeit up` has run.")
+        for r in rows:
+            run = s.get(Run, r.current_run_id) if r.current_run_id else None
+            what = f" {run.ticket_key} (run {run.id})" if run else ""
+            typer.echo(f"{r.name:<12} {r.state:<9}{what}  updated {r.updated_at:%H:%M:%S}")
+    leases = LeaseStore(engine).all()
+    if leases:
+        typer.echo("Leases:")
+        for lease in leases:
+            typer.echo(
+                f"  {lease.ticket_key:<12} {lease.instance:<12} run {lease.run_id} "
+                f"heartbeat {lease.heartbeat_at:%H:%M:%S}"
+            )
 
 
 @eval_app.command("run")

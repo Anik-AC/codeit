@@ -39,6 +39,17 @@ def previous_run_start(engine: Engine, role: str, key: str, run_id: str) -> date
     return started if started.tzinfo else started.replace(tzinfo=UTC)
 
 
+def previous_run_status(engine: Engine, role: str, key: str, run_id: str) -> str | None:
+    """Status of the latest earlier run of `role` on ticket `key`."""
+    with Session(engine) as s:
+        return s.scalars(
+            select(Run.status)
+            .where(Run.role == role, Run.ticket_key == key, Run.id != run_id)
+            .order_by(Run.started_at.desc())
+            .limit(1)
+        ).first()
+
+
 def finish_run(
     engine: Engine,
     run_id: str,

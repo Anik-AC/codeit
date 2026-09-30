@@ -20,6 +20,7 @@ class PullRequest(BaseModel):
     base_ref: str
     base_sha: str
     mergeable_state: str | None = None
+    merge_commit_sha: str | None = None
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> PullRequest:
@@ -33,6 +34,7 @@ class PullRequest(BaseModel):
             base_ref=raw["base"]["ref"],
             base_sha=raw["base"]["sha"],
             mergeable_state=raw.get("mergeable_state"),
+            merge_commit_sha=raw.get("merge_commit_sha"),
         )
 
 
