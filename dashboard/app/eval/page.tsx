@@ -34,17 +34,17 @@ function Eval() {
           Evals
         </Link>
         <span className="text-muted">/</span>
-        <h1 className="font-mono text-lg font-semibold">{run.id}</h1>
+        <h1 className="font-mono text-xl font-semibold">{run.id}</h1>
         <Badge tone={run.ended_at ? "neutral" : "busy"}>{run.ended_at ? "finished" : "running"}</Badge>
       </div>
-      {stopped && <p className="rounded-md bg-warn-soft px-3 py-2 text-sm text-warn">Stopped early: {stopped}</p>}
+      {stopped && <p className="rounded-md border border-line px-3 py-2 text-sm text-warn">Stopped early: {stopped}</p>}
       <Card>
         <CardBody>
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             {(review ? REVIEW : CODER).map((name) => (
               <div key={name} className="flex flex-col gap-0.5">
                 <dt className="text-xs text-muted">{name.replaceAll("_", " ")}</dt>
-                <dd className="tabular text-lg font-semibold">{pct(metric(run, name))}</dd>
+                <dd className="tabular font-display text-3xl font-semibold tracking-tight">{pct(metric(run, name))}</dd>
               </div>
             ))}
           </dl>

@@ -39,7 +39,7 @@ function ReviewResult({ result }: { result: Record<string, unknown> }) {
         {typeof result.review_url === "string" && result.review_url && (
           <>
             {" · "}
-            <a className="text-accent hover:underline" href={result.review_url} target="_blank" rel="noreferrer">
+            <a className="text-ink underline-offset-4 hover:underline" href={result.review_url} target="_blank" rel="noreferrer">
               PR review
             </a>
           </>
@@ -53,7 +53,7 @@ function CoderResult({ result }: { result: Record<string, unknown> }) {
   return (
     <div className="flex flex-col gap-2">
       {typeof result.pr_url === "string" && result.pr_url && (
-        <a className="text-accent hover:underline" href={result.pr_url} target="_blank" rel="noreferrer">
+        <a className="text-ink underline-offset-4 hover:underline" href={result.pr_url} target="_blank" rel="noreferrer">
           {result.pr_url}
         </a>
       )}
@@ -82,7 +82,9 @@ function Run() {
           Runs
         </Link>
         <span className="text-muted">/</span>
-        <h1 className="font-mono text-lg font-semibold">{run.id}</h1>
+        <h1 className="font-display text-2xl font-semibold tracking-tight">
+          <span className="font-mono text-xl">{run.id}</span>
+        </h1>
         <Badge tone={runTone(run.status)}>{run.status}</Badge>
       </div>
       <Card>
@@ -91,7 +93,7 @@ function Run() {
             <Fact label="Agent">{run.instance || run.role}</Fact>
             <Fact label="Ticket">
               {run.ticket_key && (
-                <Link className="font-mono text-accent hover:underline" href={`/runs/?ticket=${run.ticket_key}`}>
+                <Link className="font-mono text-ink underline-offset-4 hover:underline" href={`/runs/?ticket=${run.ticket_key}`}>
                   {run.ticket_key}
                 </Link>
               )}
@@ -107,7 +109,7 @@ function Run() {
           </dl>
         </CardBody>
       </Card>
-      {run.error && <p className="rounded-md bg-bad-soft px-3 py-2 text-sm text-bad">{run.error}</p>}
+      {run.error && <p className="rounded-md border border-line px-3 py-2 text-sm text-bad">{run.error}</p>}
       {run.result && (
         <Card>
           <CardHeader>

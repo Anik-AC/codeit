@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "motion/react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +19,7 @@ function PassChart({ runs }: { runs: EvalRunSummary[] }) {
     return <p className="text-sm text-muted">No finished Coder evals yet.</p>;
   }
   const shas = [...new Set(points.map((p) => p.steering_sha ?? "none"))];
-  const palette = ["var(--accent)", "var(--ok)", "var(--warn)", "var(--bad)", "var(--muted)"];
+  const palette = ["var(--coder)", "var(--reviewer)", "var(--planner)", "var(--human)", "var(--muted)"];
   const W = 640;
   const H = 200;
   const pad = { l: 40, r: 16, t: 12, b: 28 };
@@ -37,9 +38,22 @@ function PassChart({ runs }: { runs: EvalRunSummary[] }) {
               </text>
             </g>
           ))}
-          <path d={line} fill="none" stroke="var(--line)" strokeWidth={1.5} />
+          <motion.path
+            d={line}
+            fill="none"
+            stroke="var(--coder)"
+            strokeWidth={2}
+            strokeLinecap="round"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ duration: 1.4, ease: [0.16, 1, 0.3, 1] }}
+          />
           {points.map((p, i) => (
-            <circle
+            <motion.circle
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.3 + i * 0.08, type: "spring", stiffness: 400, damping: 20 }}
+              style={{ transformBox: "fill-box", transformOrigin: "center" }}
               key={p.id}
               cx={x(i)}
               cy={y(metric(p, "pass@1") ?? 0)}
@@ -47,7 +61,7 @@ function PassChart({ runs }: { runs: EvalRunSummary[] }) {
               fill={palette[shas.indexOf(p.steering_sha ?? "none") % palette.length]}
             >
               <title>{`${p.config} · ${pct(metric(p, "pass@1"))} · ${p.steering_sha ?? ""}`}</title>
-            </circle>
+            </motion.circle>
           ))}
           {points.map((p, i) => (
             <text key={`d${p.id}`} x={x(i)} y={H - 8} textAnchor="middle" fontSize={10} fill="var(--muted)">
@@ -74,7 +88,7 @@ export default function EvalsPage() {
   return (
     <>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-xl font-semibold">Evals</h1>
+        <h1 className="font-display text-3xl font-semibold tracking-tight">Evals</h1>
         <p className="text-muted">
           Run with <code className="font-mono text-xs">codeit eval run</code> and{" "}
           <code className="font-mono text-xs">codeit eval review</code>.
@@ -103,9 +117,9 @@ export default function EvalsPage() {
           </thead>
           <tbody className="tabular">
             {runs.map((r) => (
-              <tr key={r.id} className="border-b border-line last:border-0 hover:bg-accent-soft/40">
+              <tr key={r.id} className="border-b border-line last:border-0 hover:bg-panel-2">
                 <td className="px-4 py-2 font-mono text-xs">
-                  <Link className="text-accent hover:underline" href={`/eval/?id=${r.id}`}>
+                  <Link className="text-ink underline-offset-4 hover:underline" href={`/eval/?id=${r.id}`}>
                     {r.id.slice(-8)}
                   </Link>
                   {!r.ended_at && <Badge tone="busy" className="ml-2">running</Badge>}
