@@ -28,8 +28,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M6 Reviewer | Done |
 | M7 Orchestrator | Done |
 | M8 API + dashboard | Done |
-| M9 Eval harness | In review |
-| M10 to M13 | Planned (see PRD section 23) |
+| M9 Eval harness | Done |
+| M10 Rebase agent | In review |
+| M11 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -220,6 +221,23 @@ Every 45 seconds it:
 If you move a ticket yourself while an agent works on it, the agent's result is recorded but not applied. Ctrl-C lets running jobs finish for up to a minute; the rest resume on the next start.
 
 **Network:** worker containers reach the internet only through the `codeit-proxy` container, and only the hosts in `sandbox.egress_allowlist` plus jira-mcp on the host. Build the proxy image with `codeit sandbox build`, which builds both images.
+
+## Rebase agent
+
+Keeps open agent PRs applying cleanly to main (PRD 11.5, ADR-0017). `codeit up` polls every `rebase.poll_minutes` (default 10). To run it once:
+
+```bash
+uv run codeit run rebase CODEIT-83              # --any-time lets Claude resolve conflicts outside its window
+```
+
+- **Clean rebase:** plain git, then CodeIt runs install, typecheck, unit and e2e, and pushes only if they are green.
+- **Small conflicts:** Claude resolves them in a container, keeping both sides' changes. CodeIt then checks the result and runs the tests itself before pushing.
+- **Escalated to you** (a Jira comment and `needs-human`, nothing pushed):
+  - more than `rebase.max_files` conflicted files
+  - lockfiles, migrations or `.github/` (`rebase.never_auto`)
+  - failing tests
+  - an agent that could not finish
+- **Jira status never changes.** Conflicts outside Claude's run window wait for the window.
 
 ## Dashboard
 

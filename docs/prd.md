@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.11 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0016)
+**Status:** Draft v1.12 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0017)
 **Date:** 2026-09-29
 
 ---
@@ -636,6 +636,11 @@ Every poll cycle:
      - tests are red after resolving
 - **Jira status:** never changes. Comments only.
 - **After a successful rebase of a PR in `Human Review`:** add a comment so the human knows the diff changed.
+- **As built (ADR-0017):**
+  - The clean rebase runs on the host; tests and conflict resolution run in containers.
+  - CodeIt re-runs the tests itself and pushes with `--force-with-lease`.
+  - Conflicts wait for the Claude run window.
+  - The Rebase agent gets no jira-mcp token.
 
 ### 11.6 Docs agent
 

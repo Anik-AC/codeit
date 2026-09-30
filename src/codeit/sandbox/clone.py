@@ -162,6 +162,34 @@ class CloneManager:
         await self.git.run("clean", "-fd", cwd=path)
         return path
 
+    async def prepare_branch(self, key: str, branch: str) -> Path:
+        """A clone at exactly `origin/{branch}` for the Rebase agent, apart from the Coder's
+        clone. Anything local is thrown away: the branch on GitHub is the truth."""
+        await self.refresh_mirror()
+        path = self.clones / f"{key}-rebase"
+        for attempt in (1, 2):
+            try:
+                if not (path / ".git").is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    await self.git.run("clone", "--no-checkout", str(self.mirror), str(path))
+                    await self.git.run("remote", "set-url", "origin", self.remote_url, cwd=path)
+                await self._set_identity(path)
+                await self.git.run("rebase", "--abort", cwd=path, check=False)
+                await self.git.run("fetch", "origin", cwd=path)
+                await self.git.run(
+                    "checkout", "--force", "-B", branch, f"origin/{branch}", cwd=path
+                )
+                await self.git.run("reset", "--hard", f"origin/{branch}", cwd=path)
+                await self.git.run("clean", "-fd", cwd=path)
+                return path
+            except GitError as e:
+                if attempt == 2:
+                    raise
+                log.warning("clone.broken_rebase_recloning", key=key, error=str(e)[:300])
+                shutil.rmtree(path, ignore_errors=True)
+        raise AssertionError("unreachable")
+
     async def _set_identity(self, path: Path) -> None:
         """Commits made here, including host-side rebases, are the bot's (PRD D5)."""
         await self.git.run("config", "user.name", BOT_NAME, cwd=path)

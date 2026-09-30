@@ -220,6 +220,24 @@ class Sandbox:
             removed.append(str(c.name))
         return removed
 
+    def remove_stale(self, max_age_s: float) -> list[str]:
+        """Remove worker containers older than `max_age_s`: no run lasts that long, so they
+        were left by a process that died (or an eval that was killed)."""
+        import datetime as dt
+
+        now = dt.datetime.now(dt.UTC)
+        removed = []
+        for c in self.client.containers.list(all=True, filters={"label": LABEL}):
+            created = str(c.attrs.get("Created", ""))[:26].rstrip("Z")
+            try:
+                started = dt.datetime.fromisoformat(created).replace(tzinfo=dt.UTC)
+            except ValueError:
+                continue
+            if (now - started).total_seconds() > max_age_s:
+                c.remove(force=True)
+                removed.append(str(c.name))
+        return removed
+
     def reap(self) -> list[str]:
         """Remove every CodeIt worker container, e.g. left behind by a crash."""
         removed = []

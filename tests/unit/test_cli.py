@@ -51,9 +51,9 @@ def test_db_upgrade(tmp_path: Path) -> None:
 
 
 def test_stub_names_milestone() -> None:
-    result = runner.invoke(app, ["run", "rebase", "CODEIT-1"])
+    result = runner.invoke(app, ["run", "docs", "CODEIT-1"])
     assert result.exit_code == 2
-    assert "M10" in result.output
+    assert "M11" in result.output
 
 
 def test_json_logs_carry_run_context(tmp_path: Path) -> None:

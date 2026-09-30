@@ -125,3 +125,4 @@ class MergeWatcher:
         if self.clones is not None:
             self.clones.remove(key)
             self.clones.remove(f"{key}-review")
+            self.clones.remove(f"{key}-rebase")

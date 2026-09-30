@@ -155,3 +155,19 @@ async def test_exec_lines_timeout(fake_docker: Path) -> None:
     ]
     assert lines == ["started"]
     assert result.timed_out
+
+
+def test_remove_stale_containers() -> None:
+    import datetime as dt
+
+    old = MagicMock()
+    old.name = "codeit-reviewer-old"
+    old.attrs = {"Created": (dt.datetime.now(dt.UTC) - dt.timedelta(hours=3)).isoformat()}
+    new = MagicMock()
+    new.name = "codeit-coder-new"
+    new.attrs = {"Created": dt.datetime.now(dt.UTC).isoformat()}
+    client = MagicMock()
+    client.containers.list.return_value = [old, new]
+    assert Sandbox(client).remove_stale(2 * 3600) == ["codeit-reviewer-old"]
+    old.remove.assert_called_once_with(force=True)
+    new.remove.assert_not_called()

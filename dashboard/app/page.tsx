@@ -19,7 +19,7 @@ import { ROLES, roleColor } from "@/lib/roles";
 import type { Agent, AgentsResponse, Budget, RunSummary, Ticket } from "@/lib/types";
 import { ago, duration, usd } from "@/lib/utils";
 
-const SECTIONS = ["coder", "reviewer"] as const;
+const SECTIONS = ["coder", "reviewer", "rebase"] as const;
 const STATE_TEXT: Record<Agent["state"], string> = {
   busy: "Working",
   idle: "Ready",
@@ -217,6 +217,7 @@ function StartRun({ running }: { running: boolean }) {
               <Select id="role" value={role} onChange={(e) => setRole(e.target.value)}>
                 <option value="reviewer">Reviewer</option>
                 <option value="coder">Coder</option>
+                <option value="rebase">Rebaser</option>
               </Select>
             </div>
             <div className="flex flex-col gap-1">
@@ -326,14 +327,16 @@ export default function AgentsPage() {
         </CardBody>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {SECTIONS.map((role) => (
           <Card key={role}>
             <CardHeader>
-              <div className="flex items-center gap-2.5">
-                <span className="size-2.5 rounded-full" style={{ background: roleColor(role) }} />
-                <CardTitle>{ROLES[role].label}s</CardTitle>
-                <span className="hidden text-xs text-faint sm:inline">{ROLES[role].does}</span>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="size-2.5 shrink-0 rounded-full" style={{ background: roleColor(role) }} />
+                <div className="min-w-0">
+                  <CardTitle>{ROLES[role].label}s</CardTitle>
+                  <p className="truncate text-xs text-faint">{ROLES[role].does}</p>
+                </div>
               </div>
               {agents.data?.running && <SlotControl role={role} count={agents.data.slots[role] ?? 0} />}
             </CardHeader>

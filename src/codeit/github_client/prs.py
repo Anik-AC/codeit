@@ -60,6 +60,17 @@ async def find_pr(gh: GitHubClient, repo: str, branch: str) -> PullRequest | Non
     return None
 
 
+async def open_pr_numbers(gh: GitHubClient, repo: str) -> list[tuple[int, str]]:
+    """(number, head branch) of every open PR from branches in `repo` itself."""
+    owner = repo.split("/")[0]
+    out = []
+    for raw in await gh.get_all(f"/repos/{repo}/pulls", {"state": "open", "per_page": 100}):
+        head = raw.get("head") or {}
+        if (head.get("repo") or {}).get("owner", {}).get("login", owner) == owner:
+            out.append((int(raw["number"]), str(head.get("ref", ""))))
+    return out
+
+
 async def get_pr(gh: GitHubClient, repo: str, number: int) -> PullRequest:
     return PullRequest.from_api(await gh.get_json(f"/repos/{repo}/pulls/{number}"))
 

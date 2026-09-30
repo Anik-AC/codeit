@@ -354,6 +354,7 @@ async def judge(
     phase1: Phase1,
     suggestions: Sequence[str] = (),
     echo: Echo = print,
+    spend_role: str = ROLE,
 ) -> tuple[Verdict | None, ModelCall | None]:
     """Phase 2: the model's verdict, its spend recorded, then the phase 1 override."""
     verdict: Verdict | None = None
@@ -374,7 +375,7 @@ async def judge(
         record_spend(
             engine,
             backend=call.backend,
-            role=ROLE,
+            role=spend_role,
             usd=call.cost_usd,
             requests=call.calls,
             note=f"review {run_id}",

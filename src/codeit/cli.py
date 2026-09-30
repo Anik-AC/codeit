@@ -348,13 +348,20 @@ def run(
     ] = None,
     config: ConfigPath = DEFAULT_CONFIG_PATH,
     ids: IdsPath = DEFAULT_IDS_PATH,
+    any_time: Annotated[
+        bool,
+        typer.Option("--any-time", help="Rebase: let Claude resolve conflicts outside its window."),
+    ] = False,
 ) -> None:
     """Run one agent once on a ticket."""
     if role == "reviewer":
         _run_reviewer(key, config, ids)
         return
+    if role == "rebase":
+        _run_rebase(key, config, ids, any_time)
+        return
     if role != "coder":
-        later = {"rebase": "M10", "docs": "M11", "learning": "M12"}
+        later = {"docs": "M11", "learning": "M12"}
         _not_implemented(later.get(role, "later milestones"))
     from codeit.agents.coder_run import CoderError, run_coder, run_coder_local
     from codeit.jira_client.discover import load_ids
@@ -385,6 +392,37 @@ def run(
         typer.echo(f"turns: {a.turns}, model: {a.model}, transcript: {a.transcript_path}")
     typer.echo(f"workspace: {outcome.workspace}")
     if outcome.outcome.status not in ("pr_opened", "pr_updated", "committed"):
+        raise typer.Exit(code=1)
+
+
+def _run_rebase(key: str | None, config: Path, ids: Path, any_time: bool) -> None:
+    from codeit.agents.rebase import RebaseError, run_rebase
+    from codeit.jira_client.discover import load_ids
+    from codeit.orchestrator.budget import Decision
+    from codeit.sandbox.containers import SandboxError
+
+    if key is None:
+        typer.echo("Give a ticket KEY.", err=True)
+        raise typer.Exit(code=2)
+    cfg = _load(config)
+    try:
+        result = asyncio.run(
+            run_rebase(
+                cfg,
+                Secrets(),
+                load_ids(ids),
+                key.upper(),
+                echo=typer.echo,
+                claude_check=(lambda: Decision(True)) if any_time else None,
+            )
+        )
+    except (RebaseError, JiraError, SandboxError, FileNotFoundError) as e:
+        typer.echo(f"Rebase failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"action: {result.action}")
+    if result.new_head:
+        typer.echo(f"new head: {result.new_head}")
+    if result.action == "escalated":
         raise typer.Exit(code=1)
 
 
