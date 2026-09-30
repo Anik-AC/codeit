@@ -47,19 +47,37 @@ class CoderResult(BaseModel):
 
 
 _RESULT = re.compile(r"RESULT:\s*(\{.*\})", re.DOTALL)
+_RESULT_PAIRS = re.compile(r"^\s*RESULT:?\s+(\w+=.*)$")
+_PAIR = re.compile(r"""(\w+)=("[^"]*"|'[^']*'|\S+)""")
 
 
 def parse_result(text: str) -> CoderResult | None:
-    """The last RESULT line in the agent's final message, or None if there is none."""
+    """The last RESULT line in the agent's final message, or None if there is none.
+
+    The contract is `RESULT: {json}`. Agents sometimes write `RESULT status="committed"
+    pr_url=null` instead; that form is read too, so finished work is not called failed.
+    """
     for line in reversed(text.strip().splitlines()):
         m = _RESULT.search(line)
-        if not m:
-            continue
-        try:
-            return CoderResult.model_validate(json.loads(m.group(1)))
-        except (json.JSONDecodeError, ValidationError):
-            return None
+        if m:
+            try:
+                return CoderResult.model_validate(json.loads(m.group(1)))
+            except (json.JSONDecodeError, ValidationError):
+                return None
+        loose = _RESULT_PAIRS.search(line)
+        if loose:
+            pairs = {k: _loose_value(v) for k, v in _PAIR.findall(loose.group(1))}
+            try:
+                return CoderResult.model_validate(pairs)
+            except ValidationError:
+                return None
     return None
+
+
+def _loose_value(raw: str) -> str | None:
+    if raw in ("null", "None", ""):
+        return None
+    return raw[1:-1] if raw[:1] in "\"'" and raw[-1:] == raw[:1] else raw
 
 
 def orchestrator_comment(text: str) -> str:

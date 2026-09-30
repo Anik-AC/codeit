@@ -1,0 +1,6 @@
+- id: M1
+  kind: ui_not_wired
+  defect: The <time> element has no dateTime attribute.
+- id: M2
+  kind: off_by_one
+  defect: Dates are shown one day early (getUTCDate() - 1 via a shifted Date).

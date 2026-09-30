@@ -1,0 +1,6 @@
+- id: M1
+  kind: wrong_status
+  defect: Editing a task that does not exist returns 200 with null instead of 404.
+- id: M2
+  kind: logic_error
+  defect: Changing only the title also clears the description.

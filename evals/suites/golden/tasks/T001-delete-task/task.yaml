@@ -1,0 +1,9 @@
+id: T001
+title: Delete a task
+points: 1
+kind: api
+tags:
+- api
+- express
+- sqlite
+hidden_total: 9

@@ -1,0 +1,6 @@
+- id: M1
+  kind: missing_check
+  defect: A description of only spaces shows as an empty paragraph, not the placeholder.
+- id: M2
+  kind: ui_not_wired
+  defect: The placeholder has no muted class.

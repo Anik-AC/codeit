@@ -83,3 +83,31 @@ export interface RunStreamEvent {
   started: string;
   event: "started" | "finished" | "failed";
 }
+
+export interface EvalRunSummary {
+  id: string;
+  suite: string;
+  config: string;
+  steering_sha: string | null;
+  model: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  summary: Record<string, unknown> | null;
+}
+
+export interface EvalResultRow {
+  task_id: string;
+  repeat: number;
+  passed: boolean;
+  hidden_pass_ratio: number | null;
+  turns: number | null;
+  cost_usd: number | null;
+  duration_s: number | null;
+  diff_lines: number | null;
+  reviewer_verdict: string | null;
+  notes: Record<string, unknown> | null;
+}
+
+export interface EvalRunDetail extends EvalRunSummary {
+  results: EvalResultRow[];
+}

@@ -1,0 +1,11 @@
+id: T010
+title: Add tasks from the page
+points: 3
+kind: full-stack
+tags:
+- ui
+- react
+- api
+- validation
+- e2e
+hidden_total: 9

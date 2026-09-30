@@ -1,0 +1,107 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..676606e 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,8 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { createTask, listTasks } from "./tasks.ts";
++import { parseNewTask } from "./validation.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +29,16 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.post("/api/tasks", (req, res) => {
++    const parsed = parseNewTask(req.body);
++    if ("error" in parsed) {
++      res.status(400).json(parsed satisfies ApiError);
++      return;
++    }
++    const task = createTask(db, parsed);
++    res.status(201).location(`/api/tasks/${task.id}`).json(task);
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..31b9fb9 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -20,3 +20,15 @@ export function listTasks(db: Db): Task[] {
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++export interface NewTask {
++  title: string;
++  description: string | null;
++}
++
++export function createTask(db: Db, task: NewTask): Task {
++  const row = db
++    .prepare("INSERT INTO tasks (title, description) VALUES (?, ?) RETURNING id, title, description, created_at")
++    .get(task.title, task.description) as unknown as TaskRow;
++  return toTask(row);
++}
+diff --git a/src/server/validation.ts b/src/server/validation.ts
+new file mode 100644
+index 0000000..99a0703
+--- /dev/null
++++ b/src/server/validation.ts
+@@ -0,0 +1,17 @@
++/** Request body checks. Each returns the clean value, or an error message for a 400. */
++import type { NewTask } from "./tasks.ts";
++
++export const TITLE_MAX = 200;
++
++export function parseNewTask(body: unknown): NewTask | { error: string } {
++  const input = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
++  const title = typeof input.title === "string" ? input.title.trim() : "";
++  if (!title) return { error: "title is required" };
++  if (title.length > TITLE_MAX) return { error: `title must be at most ${TITLE_MAX} characters` };
++  const raw = input.description;
++  if (raw !== undefined && raw !== null && typeof raw !== "string") {
++    return { error: "description must be a string" };
++  }
++  const description = raw === undefined ? null : (raw as string).trim() || null;
++  return { title, description };
++}
+diff --git a/tests/unit/server/create-task.test.ts b/tests/unit/server/create-task.test.ts
+new file mode 100644
+index 0000000..95538fc
+--- /dev/null
++++ b/tests/unit/server/create-task.test.ts
+@@ -0,0 +1,27 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb } from "../../../src/server/db.ts";
++
++describe("POST /api/tasks", () => {
++  it("creates a task", async () => {
++    const app = createApp(openDb(":memory:"));
++    const res = await request(app).post("/api/tasks").send({ title: " Write tests ", description: "" });
++    expect(res.status).toBe(201);
++    expect(res.body).toMatchObject({ title: "Write tests", description: null });
++    expect(res.headers.location).toBe(`/api/tasks/${res.body.id}`);
++    const list = await request(app).get("/api/tasks");
++    expect(list.body).toEqual([res.body]);
++  });
++
++  it("validates the title and description", async () => {
++    const app = createApp(openDb(":memory:"));
++    expect((await request(app).post("/api/tasks").send({})).body).toEqual({ error: "title is required" });
++    expect((await request(app).post("/api/tasks").send({ title: "x".repeat(201) })).body).toEqual({
++      error: "title must be at most 200 characters",
++    });
++    expect((await request(app).post("/api/tasks").send({ title: "x", description: [] })).body).toEqual({
++      error: "description must be a string",
++    });
++  });
++});

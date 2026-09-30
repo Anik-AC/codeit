@@ -1,0 +1,5 @@
+# The Coder as it runs in production: Claude Code in a worker container with the target's
+# steering kit. `model: null` uses CLAUDE_MODEL from .env, or Claude Code's default.
+name: default
+backend: claude_code
+model: null

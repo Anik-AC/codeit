@@ -1,0 +1,68 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..5c52b60 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -24,8 +24,13 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json({ pong: true });
+   });
+ 
+-  app.get("/api/tasks", (_req, res) => {
+-    res.json(listTasks(db));
++  app.get("/api/tasks", (req, res) => {
++    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
++    if (q.length > 100) {
++      res.status(400).json({ error: "q must be at most 100 characters" } satisfies ApiError);
++      return;
++    }
++    res.json(listTasks(db, q));
+   });
+ 
+   app.use("/api", (_req, res) => {
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..e5fddfc 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -13,10 +13,11 @@ function toTask(row: TaskRow): Task {
+   return { id: row.id, title: row.title, description: row.description, createdAt: row.created_at };
+ }
+ 
+-/** Newest first. */
+-export function listTasks(db: Db): Task[] {
+-  const rows = db
+-    .prepare("SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC")
+-    .all() as unknown as TaskRow[];
++/** Newest first. With `search`, only tasks whose title or description contains it (any case). */
++export function listTasks(db: Db, search = ""): Task[] {
++  const where = search ? "WHERE title LIKE ?1 OR description LIKE ?1" : "";
++  const sql = `SELECT id, title, description, created_at FROM tasks ${where} ORDER BY created_at DESC, id DESC`;
++  const pattern = `%${search}%`;
++  const rows = (search ? db.prepare(sql).all(pattern) : db.prepare(sql).all()) as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
+diff --git a/tests/unit/server/search.test.ts b/tests/unit/server/search.test.ts
+new file mode 100644
+index 0000000..96e25c1
+--- /dev/null
++++ b/tests/unit/server/search.test.ts
+@@ -0,0 +1,21 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("GET /api/tasks?q=", () => {
++  it("finds tasks by title or description", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const app = createApp(db);
++    const byTitle = await request(app).get("/api/tasks?q=set%20up");
++    expect(byTitle.body.map((t: { title: string }) => t.title)).toEqual(["Set up CI"]);
++    const byDescription = await request(app).get("/api/tasks?q=LUNCH");
++    expect(byDescription.body.map((t: { title: string }) => t.title)).toEqual(["Review open pull requests"]);
++  });
++
++  it("rejects very long searches", async () => {
++    const res = await request(createApp(openDb(":memory:"))).get(`/api/tasks?q=${"a".repeat(101)}`);
++    expect(res.status).toBe(400);
++  });
++});

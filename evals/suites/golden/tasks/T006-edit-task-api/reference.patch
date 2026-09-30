@@ -1,0 +1,126 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..4c9fdca 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,8 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { listTasks, updateTask } from "./tasks.ts";
++import { parseTaskChanges, parseTaskId } from "./validation.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +29,25 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.patch("/api/tasks/:id", (req, res) => {
++    const id = parseTaskId(req.params.id);
++    if (id === null) {
++      res.status(400).json({ error: "Invalid task id" } satisfies ApiError);
++      return;
++    }
++    const changes = parseTaskChanges(req.body);
++    if ("error" in changes) {
++      res.status(400).json(changes satisfies ApiError);
++      return;
++    }
++    const task = updateTask(db, id, changes);
++    if (!task) {
++      res.status(404).json({ error: "Task not found" } satisfies ApiError);
++      return;
++    }
++    res.json(task);
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..62edafa 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -20,3 +20,20 @@ export function listTasks(db: Db): Task[] {
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++export interface TaskChanges {
++  title?: string;
++  description?: string | null;
++}
++
++/** Applies the changes; returns the updated task, or null if there is no such task. */
++export function updateTask(db: Db, id: number, changes: TaskChanges): Task | null {
++  const row = db.prepare("SELECT id, title, description, created_at FROM tasks WHERE id = ?").get(id) as
++    | TaskRow
++    | undefined;
++  if (!row) return null;
++  const title = changes.title ?? row.title;
++  const description = changes.description === undefined ? row.description : changes.description;
++  db.prepare("UPDATE tasks SET title = ?, description = ? WHERE id = ?").run(title, description, id);
++  return toTask({ ...row, title, description });
++}
+diff --git a/src/server/validation.ts b/src/server/validation.ts
+new file mode 100644
+index 0000000..8600d7c
+--- /dev/null
++++ b/src/server/validation.ts
+@@ -0,0 +1,29 @@
++/** Request body and URL checks. Each returns the clean value, or an error for a 400. */
++import type { TaskChanges } from "./tasks.ts";
++
++export const TITLE_MAX = 200;
++
++type Result<T> = T | { error: string };
++
++/** A task id from the URL: a positive whole number, or null. */
++export function parseTaskId(raw: string): number | null {
++  return /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
++}
++
++export function parseTaskChanges(body: unknown): Result<TaskChanges> {
++  const input = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
++  if (!("title" in input) && !("description" in input)) return { error: "nothing to update" };
++  const changes: TaskChanges = {};
++  if ("title" in input) {
++    const title = typeof input.title === "string" ? input.title.trim() : "";
++    if (!title) return { error: "title is required" };
++    if (title.length > TITLE_MAX) return { error: `title must be at most ${TITLE_MAX} characters` };
++    changes.title = title;
++  }
++  if ("description" in input) {
++    const raw = input.description;
++    if (raw !== null && typeof raw !== "string") return { error: "description must be a string" };
++    changes.description = typeof raw === "string" && raw.trim() ? raw.trim() : null;
++  }
++  return changes;
++}
+diff --git a/tests/unit/server/edit-task.test.ts b/tests/unit/server/edit-task.test.ts
+new file mode 100644
+index 0000000..9fb1b23
+--- /dev/null
++++ b/tests/unit/server/edit-task.test.ts
+@@ -0,0 +1,20 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("PATCH /api/tasks/:id", () => {
++  it("updates the title", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const res = await request(createApp(db)).patch("/api/tasks/2").send({ title: "Set up CI today" });
++    expect(res.status).toBe(200);
++    expect(res.body).toMatchObject({ id: 2, title: "Set up CI today", description: null });
++  });
++
++  it("rejects an empty update and unknown tasks", async () => {
++    const app = createApp(openDb(":memory:"));
++    expect((await request(app).patch("/api/tasks/1").send({})).body).toEqual({ error: "nothing to update" });
++    expect((await request(app).patch("/api/tasks/1").send({ title: "x" })).status).toBe(404);
++  });
++});

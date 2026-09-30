@@ -1,0 +1,27 @@
+diff --git a/src/client/TaskList.tsx b/src/client/TaskList.tsx
+index 03e702c..5987446 100644
+--- a/src/client/TaskList.tsx
++++ b/src/client/TaskList.tsx
+@@ -9,7 +9,7 @@ export function TaskList({ tasks }: { tasks: Task[] }) {
+       {tasks.map((task) => (
+         <li key={task.id}>
+           <strong>{task.title}</strong>
+-          {task.description && <p>{task.description}</p>}
++          {task.description?.trim() ? <p>{task.description}</p> : <p className="muted">No description</p>}
+         </li>
+       ))}
+     </ul>
+diff --git a/tests/unit/client/TaskList.test.tsx b/tests/unit/client/TaskList.test.tsx
+index 744e716..f76fbbb 100644
+--- a/tests/unit/client/TaskList.test.tsx
++++ b/tests/unit/client/TaskList.test.tsx
+@@ -23,4 +23,9 @@ describe("TaskList", () => {
+     expect(items[0]).toHaveTextContent("FirstDetails");
+     expect(items[1]).toHaveTextContent("Second");
+   });
++
++  it("marks tasks without a description", () => {
++    render(<TaskList tasks={[{ id: 1, title: "Bare", description: null, createdAt: "2026-01-01T00:00:00Z" }]} />);
++    expect(screen.getByText("No description")).toHaveClass("muted");
++  });
+ });

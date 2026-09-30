@@ -1,0 +1,212 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..21dd710 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,8 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { createTask, listTasks } from "./tasks.ts";
++import { parseNewTask, today } from "./validation.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -24,8 +25,26 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json({ pong: true });
+   });
+ 
+-  app.get("/api/tasks", (_req, res) => {
+-    res.json(listTasks(db));
++  app.get("/api/tasks", (req, res) => {
++    const overdue = req.query.overdue;
++    if (overdue === undefined) {
++      res.json(listTasks(db));
++      return;
++    }
++    if (overdue !== "true") {
++      res.status(400).json({ error: "overdue must be true" } satisfies ApiError);
++      return;
++    }
++    res.json(listTasks(db, today()));
++  });
++
++  app.post("/api/tasks", (req, res) => {
++    const parsed = parseNewTask(req.body);
++    if ("error" in parsed) {
++      res.status(400).json(parsed satisfies ApiError);
++      return;
++    }
++    res.status(201).json(createTask(db, parsed));
+   });
+ 
+   app.use("/api", (_req, res) => {
+diff --git a/src/server/db.ts b/src/server/db.ts
+index 0060c33..22911b4 100644
+--- a/src/server/db.ts
++++ b/src/server/db.ts
+@@ -10,6 +10,7 @@ const MIGRATIONS: string[] = [
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`,
++  "ALTER TABLE tasks ADD COLUMN due_date TEXT",
+ ];
+ 
+ export function openDb(path: string): Db {
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..f1747af 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -1,4 +1,4 @@
+-/** Task persistence. The only feature today is listing; see README for what is next. */
++/** Task persistence. */
+ import type { Task } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+ 
+@@ -7,16 +7,41 @@ interface TaskRow {
+   title: string;
+   description: string | null;
+   created_at: string;
++  due_date: string | null;
+ }
+ 
++const COLUMNS = "id, title, description, created_at, due_date";
++
+ function toTask(row: TaskRow): Task {
+-  return { id: row.id, title: row.title, description: row.description, createdAt: row.created_at };
++  return {
++    id: row.id,
++    title: row.title,
++    description: row.description,
++    createdAt: row.created_at,
++    dueDate: row.due_date,
++  };
+ }
+ 
+-/** Newest first. */
+-export function listTasks(db: Db): Task[] {
+-  const rows = db
+-    .prepare("SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC")
+-    .all() as unknown as TaskRow[];
++/** Newest first. With `dueBefore` (YYYY-MM-DD), only tasks due before that day. */
++export function listTasks(db: Db, dueBefore?: string): Task[] {
++  const order = "ORDER BY created_at DESC, id DESC";
++  const rows = (
++    dueBefore === undefined
++      ? db.prepare(`SELECT ${COLUMNS} FROM tasks ${order}`).all()
++      : db.prepare(`SELECT ${COLUMNS} FROM tasks WHERE due_date <= ? ${order}`).all(dueBefore)
++  ) as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++export interface NewTask {
++  title: string;
++  description: string | null;
++  dueDate: string | null;
++}
++
++export function createTask(db: Db, task: NewTask): Task {
++  const row = db
++    .prepare(`INSERT INTO tasks (title, description, due_date) VALUES (?, ?, ?) RETURNING ${COLUMNS}`)
++    .get(task.title, task.description, task.dueDate) as unknown as TaskRow;
++  return toTask(row);
++}
+diff --git a/src/server/validation.ts b/src/server/validation.ts
+new file mode 100644
+index 0000000..a99f050
+--- /dev/null
++++ b/src/server/validation.ts
+@@ -0,0 +1,28 @@
++/** Request body checks. Each returns the clean value, or an error message for a 400. */
++import type { NewTask } from "./tasks.ts";
++
++/** True for a real calendar date written as YYYY-MM-DD. */
++export function isDate(value: string): boolean {
++  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
++  const date = new Date(`${value}T00:00:00Z`);
++  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
++}
++
++/** Today's date in UTC, as YYYY-MM-DD. */
++export function today(): string {
++  return new Date().toISOString().slice(0, 10);
++}
++
++export function parseNewTask(body: unknown): NewTask | { error: string } {
++  const input = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
++  const title = typeof input.title === "string" ? input.title.trim() : "";
++  if (!title) return { error: "title is required" };
++  if (title.length > 200) return { error: "title must be at most 200 characters" };
++  const description =
++    typeof input.description === "string" && input.description.trim() ? input.description.trim() : null;
++  const due = input.dueDate;
++  if (due !== undefined && due !== null && (typeof due !== "string" || !isDate(due))) {
++    return { error: "dueDate must be a date like 2026-05-31" };
++  }
++  return { title, description, dueDate: typeof due === "string" ? due : null };
++}
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 2a497e2..f7666b4 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -5,6 +5,7 @@ export interface Task {
+   title: string;
+   description: string | null;
+   createdAt: string; // ISO 8601, UTC
++  dueDate: string | null; // YYYY-MM-DD
+ }
+ 
+ export interface ApiError {
+diff --git a/tests/unit/client/TaskList.test.tsx b/tests/unit/client/TaskList.test.tsx
+index 744e716..8324bbf 100644
+--- a/tests/unit/client/TaskList.test.tsx
++++ b/tests/unit/client/TaskList.test.tsx
+@@ -13,8 +13,8 @@ describe("TaskList", () => {
+     render(
+       <TaskList
+         tasks={[
+-          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z" },
+-          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z" },
++          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z", dueDate: null },
++          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z", dueDate: null },
+         ]}
+       />,
+     );
+diff --git a/tests/unit/server/due-dates.test.ts b/tests/unit/server/due-dates.test.ts
+new file mode 100644
+index 0000000..b051f11
+--- /dev/null
++++ b/tests/unit/server/due-dates.test.ts
+@@ -0,0 +1,32 @@
++import request from "supertest";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb } from "../../../src/server/db.ts";
++import { isDate } from "../../../src/server/validation.ts";
++
++afterEach(() => {
++  vi.useRealTimers();
++});
++
++describe("due dates", () => {
++  it("knows real dates", () => {
++    expect(isDate("2026-05-31")).toBe(true);
++    expect(isDate("2026-02-30")).toBe(false);
++    expect(isDate("2026-5-31")).toBe(false);
++  });
++
++  it("lists overdue tasks", async () => {
++    vi.useFakeTimers({ toFake: ["Date"] });
++    vi.setSystemTime(new Date("2026-03-10T12:00:00Z"));
++    const app = createApp(openDb(":memory:"));
++    await request(app).post("/api/tasks").send({ title: "Late", dueDate: "2026-03-09" });
++    const res = await request(app).get("/api/tasks?overdue=true");
++    expect(res.body.map((t: { title: string }) => t.title)).toEqual(["Late"]);
++  });
++
++  it("rejects bad due dates", async () => {
++    const res = await request(createApp(openDb(":memory:"))).post("/api/tasks").send({ title: "x", dueDate: "soon" });
++    expect(res.status).toBe(400);
++    expect(res.body).toEqual({ error: "dueDate must be a date like 2026-05-31" });
++  });
++});

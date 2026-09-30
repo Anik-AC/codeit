@@ -1,0 +1,6 @@
+- id: M1
+  kind: off_by_one
+  defect: limit=100 is rejected; the check is >= 100 instead of > 100.
+- id: M2
+  kind: missing_check
+  defect: Only the range is checked, so limit=abc or 2.5 reaches SQLite (500 or wrong results).

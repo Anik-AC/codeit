@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.9 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0014)
+**Status:** Draft v1.10 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0015)
 **Date:** 2026-09-29
 
 ---
@@ -904,6 +904,12 @@ tasks/
   - mix of UI, API and full-stack
 - **Every hidden test is reviewed by the owner.** The harness verifies that `reference.patch` passes all hidden tests and that `base_commit` fails at least one.
 
+- **As built (ADR-0015):**
+  - All tasks start from one pinned commit of codeit-sandbox-app.
+  - Hidden tests live under `tests/unit/hidden/` and `e2e/hidden-*`.
+  - Each task records `hidden_total`, so tests in a hidden file that fails to load count as failed.
+  - `codeit eval verify` checks the suite.
+
 ### 17.2 Runner
 
 `codeit eval run --suite golden --config <name> --repeats 3`
@@ -940,7 +946,12 @@ tasks/
 - critical catch rate on mutants
 - false-fail rate on the clean `reference.patch`
 
+- **As built (ADR-0015):** 24 mutants, 2 per task, whose own tests pass. `codeit eval review` runs the production Reviewer on them, without Jira, GitHub or CI.
+
 ### 17.5 Planner evals
+
+- **Moved to M12 (ADR-0015):** Planner evals are built with the Learning agent, which needs them.
+
 
 **Suite:** 3 sample plans.
 

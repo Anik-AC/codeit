@@ -1,0 +1,9 @@
+id: T009
+title: Search tasks through the API
+points: 2
+kind: api
+tags:
+- api
+- sqlite
+- validation
+hidden_total: 7

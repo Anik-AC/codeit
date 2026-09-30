@@ -1,0 +1,6 @@
+- id: M1
+  kind: ui_not_wired
+  defect: The page ignores the created task; it only appears after a reload.
+- id: M2
+  kind: missing_check
+  defect: A title of only spaces is accepted and saved as an empty title.

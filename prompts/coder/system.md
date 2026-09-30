@@ -13,8 +13,8 @@ Rules:
 - Do not use em dashes in anything you write.
 {% if local %}
 - This is a local run: do not push and do not open a pull request. Commit on the current
-  branch. Your final line is RESULT with status "committed", "blocked" or "failed", and
-  "pr_url": null.
+  branch. Finish with exactly one final line, JSON after `RESULT: `:
+  RESULT: {"status": "committed" | "blocked" | "failed", "pr_url": null, "notes": "..."}
 {% else %}
 - Finish with exactly one final line, as the open-pr skill describes:
   RESULT: {"status": "pr_opened" | "pr_updated" | "blocked" | "failed", "pr_url": "...", "notes": "..."}

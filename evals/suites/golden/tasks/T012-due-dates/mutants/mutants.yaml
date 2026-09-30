@@ -1,0 +1,6 @@
+- id: M1
+  kind: off_by_one
+  defect: Tasks due today count as overdue (<= instead of <).
+- id: M2
+  kind: missing_check
+  defect: Only the YYYY-MM-DD shape is checked, so 2026-02-30 is accepted.

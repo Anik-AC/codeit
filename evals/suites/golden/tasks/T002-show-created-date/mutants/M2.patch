@@ -1,0 +1,47 @@
+diff --git a/src/client/TaskList.tsx b/src/client/TaskList.tsx
+index 03e702c..b3a285f 100644
+--- a/src/client/TaskList.tsx
++++ b/src/client/TaskList.tsx
+@@ -1,5 +1,12 @@
+ import type { Task } from "../shared/types.ts";
+ 
++const dateFormat = new Intl.DateTimeFormat("en-US", {
++  month: "short",
++  day: "numeric",
++  year: "numeric",
++  timeZone: "UTC",
++});
++
+ export function TaskList({ tasks }: { tasks: Task[] }) {
+   if (tasks.length === 0) {
+     return <p>No tasks yet.</p>;
+@@ -8,7 +15,7 @@ export function TaskList({ tasks }: { tasks: Task[] }) {
+     <ul aria-label="Tasks">
+       {tasks.map((task) => (
+         <li key={task.id}>
+-          <strong>{task.title}</strong>
++          <strong>{task.title}</strong> <time dateTime={task.createdAt}>{dateFormat.format(new Date(Date.parse(task.createdAt) - 86_400_000))}</time>
+           {task.description && <p>{task.description}</p>}
+         </li>
+       ))}
+diff --git a/tests/unit/client/TaskList.test.tsx b/tests/unit/client/TaskList.test.tsx
+index 744e716..0aa623e 100644
+--- a/tests/unit/client/TaskList.test.tsx
++++ b/tests/unit/client/TaskList.test.tsx
+@@ -20,7 +20,15 @@ describe("TaskList", () => {
+     );
+     const items = screen.getAllByRole("listitem");
+     expect(items).toHaveLength(2);
+-    expect(items[0]).toHaveTextContent("FirstDetails");
++    expect(items[0]).toHaveTextContent("First");
++    expect(items[0]).toHaveTextContent("Details");
+     expect(items[1]).toHaveTextContent("Second");
+   });
++
++  it("shows the creation date in UTC", () => {
++    render(<TaskList tasks={[{ id: 1, title: "First", description: null, createdAt: "2026-02-03T23:59:00Z" }]} />);
++    const date = screen.getByRole("listitem").querySelector("time");
++    expect(date?.textContent).toMatch(/2026/);
++    expect(date).toHaveAttribute("datetime", "2026-02-03T23:59:00Z");
++  });
+ });

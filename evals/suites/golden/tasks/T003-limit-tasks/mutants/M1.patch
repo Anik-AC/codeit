@@ -1,0 +1,75 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..915e244 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -24,8 +24,18 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json({ pong: true });
+   });
+ 
+-  app.get("/api/tasks", (_req, res) => {
+-    res.json(listTasks(db));
++  app.get("/api/tasks", (req, res) => {
++    const raw = req.query.limit;
++    if (raw === undefined) {
++      res.json(listTasks(db));
++      return;
++    }
++    if (typeof raw !== "string" || !/^\d+$/.test(raw) || Number(raw) < 1 || Number(raw) >= 100) {
++      const body: ApiError = { error: "limit must be a whole number from 1 to 100" };
++      res.status(400).json(body);
++      return;
++    }
++    res.json(listTasks(db, Number(raw)));
+   });
+ 
+   app.use("/api", (_req, res) => {
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..b3de543 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -13,10 +13,11 @@ function toTask(row: TaskRow): Task {
+   return { id: row.id, title: row.title, description: row.description, createdAt: row.created_at };
+ }
+ 
+-/** Newest first. */
+-export function listTasks(db: Db): Task[] {
+-  const rows = db
+-    .prepare("SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC")
+-    .all() as unknown as TaskRow[];
++/** Newest first; at most `limit` tasks when given. */
++export function listTasks(db: Db, limit?: number): Task[] {
++  const sql = "SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC";
++  const rows = (
++    limit === undefined ? db.prepare(sql).all() : db.prepare(`${sql} LIMIT ?`).all(limit)
++  ) as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
+diff --git a/tests/unit/server/limit.test.ts b/tests/unit/server/limit.test.ts
+new file mode 100644
+index 0000000..bd4e3de
+--- /dev/null
++++ b/tests/unit/server/limit.test.ts
+@@ -0,0 +1,23 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("GET /api/tasks?limit=", () => {
++  it("returns only the newest tasks", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const res = await request(createApp(db)).get("/api/tasks?limit=2");
++    expect(res.status).toBe(200);
++    expect(res.body.map((t: { title: string }) => t.title)).toEqual([
++      "Review open pull requests",
++      "Set up CI",
++    ]);
++  });
++
++  it.each(["0", "101", "x"])("rejects limit=%s", async (limit) => {
++    const res = await request(createApp(openDb(":memory:"))).get(`/api/tasks?limit=${limit}`);
++    expect(res.status).toBe(400);
++    expect(res.body).toEqual({ error: "limit must be a whole number from 1 to 100" });
++  });
++});

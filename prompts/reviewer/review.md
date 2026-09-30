@@ -29,3 +29,9 @@ The diff is large, so here are per-file summaries instead of the full diff:
 {{ diff }}
 </diff>
 {% endif %}
+
+Your answer:
+- `ac_coverage` lists every acceptance criterion in the ticket, one entry each.
+- `findings` lists every problem you found, each with a severity. A problem you mention
+  in `summary_md` must also be a finding.
+- The verdict follows from those two lists, as the rules say.

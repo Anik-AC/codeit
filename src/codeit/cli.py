@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 
@@ -18,6 +18,9 @@ from codeit.config import DEFAULT_CONFIG_PATH, Config, ConfigError, Secrets, loa
 from codeit.jira_client import JiraClient, JiraConfigError, JiraError
 from codeit.jira_client.discover import DEFAULT_IDS_PATH, DiscoveryError, discover, write_ids
 from codeit.jira_client.doctor import Check, run_doctor
+
+if TYPE_CHECKING:
+    from codeit.evals.runner import EvalContext
 
 app = typer.Typer(help="CodeIt: local multi-agent software delivery.", no_args_is_help=True)
 config_app = typer.Typer(help="Inspect and validate configuration.", no_args_is_help=True)
@@ -608,17 +611,118 @@ def dashboard_build(
     typer.echo(f"Built {path / 'out'}; `codeit up` serves it at the API address.")
 
 
+def _eval_context(suite: str, keep: bool = False) -> EvalContext:
+    from codeit.evals.runner import EvalContext
+    from codeit.evals.suite import load_suite
+
+    cfg = _load(DEFAULT_CONFIG_PATH)
+    return EvalContext(cfg, Secrets(), load_suite(suite), echo=typer.echo, keep=keep)
+
+
+TasksOpt = Annotated[
+    str | None, typer.Option("--tasks", help="Comma-separated task ids, e.g. T001,T005.")
+]
+SuiteOpt = Annotated[str, typer.Option("--suite", help="Suite under evals/suites/.")]
+KeepOpt = Annotated[bool, typer.Option("--keep", help="Keep the workspaces for debugging.")]
+
+
+@eval_app.command("verify")
+def eval_verify(
+    suite: SuiteOpt = "golden",
+    tasks: TasksOpt = None,
+    update: Annotated[
+        bool, typer.Option("--update", help="Write each task's hidden_total.")
+    ] = False,
+    keep: KeepOpt = False,
+) -> None:
+    """Check the suite: base commits fail the hidden tests, reference patches pass them."""
+    from codeit.evals.runner import verify
+
+    ctx = _eval_context(suite, keep)
+    chosen = ctx.suite.select(tasks.split(",") if tasks else None)
+    results = asyncio.run(verify(ctx, chosen, update=update))
+    bad = [r.task.id for r in results if not r.ok]
+    typer.echo(f"{len(results) - len(bad)} of {len(results)} tasks OK")
+    if bad:
+        typer.echo(f"Check: {', '.join(bad)}", err=True)
+        raise typer.Exit(code=1)
+
+
 @eval_app.command("run")
 def eval_run(
-    suite: Annotated[str, typer.Option("--suite")] = "golden",
-    config_name: Annotated[str, typer.Option("--config")] = "default",
-    repeats: Annotated[int, typer.Option("--repeats")] = 1,
+    suite: SuiteOpt = "golden",
+    config_name: Annotated[str, typer.Option("--config", help="evals/configs/<name>.yaml")] = (
+        "default"
+    ),
+    repeats: Annotated[int, typer.Option("--repeats", min=1, max=10)] = 1,
+    tasks: TasksOpt = None,
+    review: Annotated[
+        bool, typer.Option("--review", help="Also run the Reviewer on each result.")
+    ] = False,
+    any_time: Annotated[bool, typer.Option("--any-time", help="Ignore claude.run_window.")] = False,
+    keep: KeepOpt = False,
 ) -> None:
-    """Run an eval suite."""
-    _not_implemented("M9")
+    """Run the Coder on the suite's tasks and score it with the hidden tests (PRD 17.2)."""
+    from codeit.evals.report import run_report
+    from codeit.evals.runner import EvalStopped, latest_runs, results_of, run_coder_eval
+    from codeit.evals.suite import load_config as load_eval_config
+
+    ctx = _eval_context(suite, keep)
+    try:
+        config = load_eval_config(config_name)
+        chosen = ctx.suite.select(tasks.split(",") if tasks else None)
+        eval_id = asyncio.run(
+            run_coder_eval(ctx, config, chosen, repeats=repeats, any_time=any_time, review=review)
+        )
+    except (ValueError, EvalStopped) as e:
+        typer.echo(f"Cannot run the eval: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    run = next(r for r in latest_runs(ctx.engine) if r.id == eval_id)
+    typer.echo(run_report(run, results_of(ctx.engine, eval_id)))
+
+
+@eval_app.command("review")
+def eval_review(suite: SuiteOpt = "golden", tasks: TasksOpt = None, keep: KeepOpt = False) -> None:
+    """Run the Reviewer on each task's reference patch and its seeded bugs (PRD 17.4)."""
+    from codeit.evals.report import run_report
+    from codeit.evals.runner import latest_runs, results_of, run_review_eval
+
+    ctx = _eval_context(suite, keep)
+    chosen = ctx.suite.select(tasks.split(",") if tasks else None)
+    eval_id = asyncio.run(run_review_eval(ctx, chosen))
+    run = next(r for r in latest_runs(ctx.engine) if r.id == eval_id)
+    typer.echo(run_report(run, results_of(ctx.engine, eval_id)))
 
 
 @eval_app.command("report")
-def eval_report(compare: Annotated[str | None, typer.Option("--compare")] = None) -> None:
-    """Print or compare eval results."""
-    _not_implemented("M9")
+def eval_report(
+    run_id: Annotated[
+        str | None, typer.Argument(help="An eval run id; default the latest.")
+    ] = None,
+    compare: Annotated[
+        str | None, typer.Option("--compare", help="Config names: compare their latest runs.")
+    ] = None,
+) -> None:
+    """Print an eval run's results, or compare configs (PRD 17.6)."""
+    from codeit.evals import report
+    from codeit.evals.runner import latest_runs, results_of
+
+    cfg = _load(DEFAULT_CONFIG_PATH)
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
+    if compare:
+        try:
+            runs = report.latest_by_config(engine, [c.strip() for c in compare.split(",")])
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(code=1) from e
+        text, path = report.compare(runs, cfg.data_dir / "evals" / "reports")
+        typer.echo(text)
+        typer.echo(f"\nsaved {path}")
+        return
+    runs = latest_runs(engine)
+    run = next((r for r in runs if r.id == run_id), None) if run_id else (runs[0] if runs else None)
+    if run is None:
+        typer.echo("No eval runs yet." if not run_id else f"No eval run {run_id}.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(report.run_report(run, results_of(engine, run.id)))

@@ -11,6 +11,7 @@ const links = [
   { href: "/", label: "Agents" },
   { href: "/pipeline/", label: "Pipeline" },
   { href: "/runs/", label: "Runs" },
+  { href: "/evals/", label: "Evals" },
   { href: "/budget/", label: "Budget" },
 ];
 

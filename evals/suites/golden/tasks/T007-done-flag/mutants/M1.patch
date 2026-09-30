@@ -1,0 +1,146 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..9a71e5a 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,7 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { listTasks, toggleTask } from "./tasks.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +28,20 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.post("/api/tasks/:id/toggle", (req, res) => {
++    const raw = req.params.id;
++    if (!/^[1-9]\d*$/.test(raw)) {
++      res.status(400).json({ error: "Invalid task id" } satisfies ApiError);
++      return;
++    }
++    const task = toggleTask(db, Number(raw));
++    if (!task) {
++      res.status(404).json({ error: "Task not found" } satisfies ApiError);
++      return;
++    }
++    res.json(task);
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+diff --git a/src/server/db.ts b/src/server/db.ts
+index 0060c33..06401cb 100644
+--- a/src/server/db.ts
++++ b/src/server/db.ts
+@@ -8,7 +8,8 @@ const MIGRATIONS: string[] = [
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+-     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
++     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
++     done INTEGER NOT NULL DEFAULT 0
+    )`,
+ ];
+ 
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..57c14b1 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -1,4 +1,4 @@
+-/** Task persistence. The only feature today is listing; see README for what is next. */
++/** Task persistence. */
+ import type { Task } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+ 
+@@ -7,16 +7,33 @@ interface TaskRow {
+   title: string;
+   description: string | null;
+   created_at: string;
++  done: number;
+ }
+ 
++const COLUMNS = "id, title, description, created_at, done";
++
+ function toTask(row: TaskRow): Task {
+-  return { id: row.id, title: row.title, description: row.description, createdAt: row.created_at };
++  return {
++    id: row.id,
++    title: row.title,
++    description: row.description,
++    createdAt: row.created_at,
++    done: row.done === 1,
++  };
+ }
+ 
+ /** Newest first. */
+ export function listTasks(db: Db): Task[] {
+   const rows = db
+-    .prepare("SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC")
++    .prepare(`SELECT ${COLUMNS} FROM tasks ORDER BY created_at DESC, id DESC`)
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++/** Flips a task's done flag; returns the task, or null if there is no such task. */
++export function toggleTask(db: Db, id: number): Task | null {
++  const row = db
++    .prepare(`UPDATE tasks SET done = 1 - done WHERE id = ? RETURNING ${COLUMNS}`)
++    .get(id) as TaskRow | undefined;
++  return row ? toTask(row) : null;
++}
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 2a497e2..3db09ad 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -5,6 +5,7 @@ export interface Task {
+   title: string;
+   description: string | null;
+   createdAt: string; // ISO 8601, UTC
++  done: boolean;
+ }
+ 
+ export interface ApiError {
+diff --git a/tests/unit/client/TaskList.test.tsx b/tests/unit/client/TaskList.test.tsx
+index 744e716..02b19f6 100644
+--- a/tests/unit/client/TaskList.test.tsx
++++ b/tests/unit/client/TaskList.test.tsx
+@@ -13,8 +13,8 @@ describe("TaskList", () => {
+     render(
+       <TaskList
+         tasks={[
+-          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z" },
+-          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z" },
++          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z", done: false },
++          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z", done: false },
+         ]}
+       />,
+     );
+diff --git a/tests/unit/server/toggle.test.ts b/tests/unit/server/toggle.test.ts
+new file mode 100644
+index 0000000..1cb0d92
+--- /dev/null
++++ b/tests/unit/server/toggle.test.ts
+@@ -0,0 +1,19 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("POST /api/tasks/:id/toggle", () => {
++  it("marks a task done and undone", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const app = createApp(db);
++    expect((await request(app).post("/api/tasks/3/toggle")).body).toMatchObject({ id: 3, done: true });
++    expect((await request(app).post("/api/tasks/3/toggle")).body).toMatchObject({ id: 3, done: false });
++  });
++
++  it("returns 404 for an unknown task", async () => {
++    const res = await request(createApp(openDb(":memory:"))).post("/api/tasks/5/toggle");
++    expect(res.status).toBe(404);
++  });
++});

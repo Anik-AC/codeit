@@ -345,9 +345,6 @@ async def run_coder_local(
     """Local mode (PRD 25.1): a ticket from a markdown file; the agent commits in the clone,
     nothing is pushed and Jira is not touched."""
     repo = cfg.project.target_repo
-    run_id = str(ULID())
-    db.upgrade(cfg.db_path)
-    engine = db.make_engine(cfg.db_path)
     ticket_md = await asyncio.to_thread(ticket_file.read_text, encoding="utf-8")
     title = next((ln.lstrip("# ").strip() for ln in ticket_md.splitlines() if ln.strip()), key)
     branch = branch_name(key, title)
@@ -360,24 +357,56 @@ async def run_coder_local(
         Git(token.get_secret_value() if token else None),
     )
     prepared = await clones.prepare(key, branch)
+    return await run_coder_in(
+        cfg, secrets, prepared, key, ticket_md, instance="coder-local", sandbox=sandbox, echo=echo
+    )
+
+
+async def run_coder_in(
+    cfg: Config,
+    secrets: Secrets,
+    prepared: Prepared,
+    key: str,
+    ticket_md: str,
+    *,
+    instance: str,
+    run_id: str | None = None,
+    sandbox: Sandbox | None = None,
+    echo: Echo = print,
+) -> CoderRun:
+    """The Coder on a workspace that is already prepared, with no Jira, GitHub or jira-mcp:
+    local mode and evals (PRD 17.2). The agent commits; nothing is pushed."""
+    run_id = run_id or str(ULID())
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
     record_run(
-        engine, run_id, ROLE, instance="coder-local", ticket_key=key, prompt_hash=prompt_hash(ROLE)
+        engine, run_id, ROLE, instance=instance, ticket_key=key, prompt_hash=prompt_hash(ROLE)
     )
     system, task = build_prompts(
-        key=key, ticket_md=ticket_md, branch=branch, pr_url=None, feedback=[], local=True
+        key=key,
+        ticket_md=ticket_md,
+        branch=prepared.branch,
+        pr_url=None,
+        feedback=[],
+        local=True,
     )
     echo(f"{key}: local run {run_id} in {prepared.path}")
-    agent = await _run_agent(
-        cfg,
-        secrets,
-        sandbox or Sandbox(),
-        engine,
-        run_id=run_id,
-        prepared=prepared,
-        system=system,
-        task=task,
-        mcp_config=None,
-    )
+    agent: AgenticResult | None = None
+    try:
+        agent = await _run_agent(
+            cfg,
+            secrets,
+            sandbox or Sandbox(),
+            engine,
+            run_id=run_id,
+            prepared=prepared,
+            system=system,
+            task=task,
+            mcp_config=None,
+        )
+    except BaseException as e:
+        finish_run(engine, run_id, ROLE, {"status": "error", "error": str(e)[:2000]})
+        raise
     outcome = decide(
         agent,
         parse_result(agent.final_message),
@@ -386,4 +415,4 @@ async def run_coder_local(
         transcript_tail=agent.final_message[-1500:],
     )
     finish_run(engine, run_id, ROLE, outcome_fields(outcome), agent)
-    return CoderRun(run_id, key, branch, prepared.path, agent, outcome)
+    return CoderRun(run_id, key, prepared.branch, prepared.path, agent, outcome)
