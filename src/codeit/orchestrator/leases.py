@@ -2,24 +2,37 @@
 
 `acquire` is a single atomic upsert: it takes a free ticket, or one whose lease expired
 (its holder crashed), and fails if another live run holds it.
+
+Runs heartbeat every minute (`keep_alive`). A lease whose heartbeat stopped for a few
+minutes belongs to a dead process, so the reaper does not have to wait for the full TTL
+(ADR-0013).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Engine, delete, update
+from sqlalchemy import Engine, delete, or_, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from codeit.db.models import Lease
 
 Clock = Callable[[], datetime]
+HEARTBEAT_S = 60
+# No heartbeat for this long: the holder is dead, whatever the TTL says.
+STALE_AFTER = timedelta(minutes=3)
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 class LeaseStore:
@@ -69,9 +82,39 @@ class LeaseStore:
             lease = s.get(Lease, ticket_key)
             if lease is None:
                 return None
-            expires = (
-                lease.expires_at
-                if lease.expires_at.tzinfo
-                else lease.expires_at.replace(tzinfo=UTC)
+            return lease if _aware(lease.expires_at) > self._clock() else None
+
+    def all(self) -> list[Lease]:
+        with Session(self._engine) as s:
+            return list(s.scalars(select(Lease).order_by(Lease.acquired_at)))
+
+    def dead(self, stale_after: timedelta = STALE_AFTER) -> list[Lease]:
+        """Leases that expired, or whose heartbeat stopped `stale_after` ago."""
+        now = self._clock()
+        with Session(self._engine) as s:
+            return list(
+                s.scalars(
+                    select(Lease).where(
+                        or_(Lease.expires_at <= now, Lease.heartbeat_at <= now - stale_after)
+                    )
+                )
             )
-            return lease if expires > self._clock() else None
+
+    @contextlib.asynccontextmanager
+    async def keep_alive(
+        self, ticket_key: str, run_id: str, ttl: timedelta, every_s: float = HEARTBEAT_S
+    ) -> AsyncIterator[None]:
+        """Heartbeat the lease every `every_s` seconds while the block runs."""
+
+        async def beat() -> None:
+            while True:
+                await asyncio.sleep(every_s)
+                self.heartbeat(ticket_key, run_id, ttl)
+
+        task = asyncio.create_task(beat())
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task

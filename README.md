@@ -23,8 +23,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M4 Sandbox + Claude backend | Done |
 | M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | Done |
 | M5 Coder | Done |
-| M6 Reviewer | In review |
-| M7 to M13 | Planned (see PRD section 23) |
+| M6 Reviewer | Done |
+| M7 Orchestrator | In review |
+| M8 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -192,6 +193,30 @@ What a run does:
 
 It needs `GITHUB_TOKEN_AGENT` (to post the review), `GITHUB_TOKEN_READONLY`, `OPENROUTER_API_KEY` and the worker image. The review checklist the model follows is in `prompts/reviewer/checklist.md`.
 
+## Orchestrator
+
+`codeit up` runs the pipeline unattended (PRD 12, ADR-0013):
+
+```bash
+uv run codeit up              # jira-mcp, scheduler and merge watcher; Ctrl-C to stop
+uv run codeit up --any-time   # ignore the Claude run window for this session
+uv run codeit agents          # instances (busy, idle, parked, disabled) and leases
+uv run codeit budget          # Claude window and parking, OpenRouter spend today
+```
+
+Every 45 seconds it:
+
+1. **Recovers dead runs.** A run whose heartbeat stopped for 3 minutes (the process was killed) is abandoned: its container is removed and the ticket goes back to Ready for Dev, or to Human Review with `needs-human` the 2nd time.
+2. **Starts Reviewers, then Coders,** while slots are free (`slots:` in `config.yaml`, re-read every loop) and the budget allows:
+   - Claude runs only inside `claude.run_window` (default 23:00 to 08:00), one at a time, and not while parked after a usage limit
+   - OpenRouter roles stay under their daily USD caps
+   - tickets blocked by unfinished tickets are skipped
+3. **Moves merged tickets to Done:** a ticket in Human Review whose PR is merged goes to Done. A Done ticket whose PR is not merged gets `state-mismatch`.
+
+If you move a ticket yourself while an agent works on it, the agent's result is recorded but not applied. Ctrl-C lets running jobs finish for up to a minute; the rest resume on the next start.
+
+**Network:** worker containers reach the internet only through the `codeit-proxy` container, and only the hosts in `sandbox.egress_allowlist` plus jira-mcp on the host. Build the proxy image with `codeit sandbox build`, which builds both images.
+
 ## Models and keys
 
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
@@ -259,13 +284,13 @@ Jira and deletes it.
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
 | `src/codeit/github_client/` | GitHub REST: PRs, feedback, check runs, PR reviews |
-| `src/codeit/orchestrator/` | Leases (the scheduler loop lands in M7) |
+| `src/codeit/orchestrator/` | `codeit up`: scheduler, leases, reaper, budget guard, merge watcher |
 | `src/codeit/target.py` | The target repo's `codeit.yaml` |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
 | `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
-| `sandbox/` | Worker image (`Dockerfile`); egress proxy in M7 |
+| `sandbox/` | Worker image (`Dockerfile`) and egress proxy image (`proxy/`) |
 | `evals/` | Eval suites and rubrics |
 | `dashboard/` | Next.js dashboard (M8) |
 | `docs/` | PRD, ADRs, work log |

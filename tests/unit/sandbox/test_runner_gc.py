@@ -35,7 +35,12 @@ FULL = Secrets(
 
 
 def test_role_env_follows_prd_19() -> None:
-    assert role_env("coder", FULL) == {"CLAUDE_CODE_OAUTH_TOKEN": "oauth", "GH_TOKEN": "gh-agent"}
+    assert role_env("coder", FULL) == {
+        "CLAUDE_CODE_OAUTH_TOKEN": "oauth",
+        "GH_TOKEN": "gh-agent",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "MCP_CONNECTION_NONBLOCKING": "0",
+    }
     assert role_env("rebase", FULL) == role_env("coder", FULL)
     assert role_env("reviewer", FULL) == {"GH_TOKEN": "gh-ro"}
     for role in ("coder", "reviewer", "rebase"):

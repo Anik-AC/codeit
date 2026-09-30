@@ -27,6 +27,7 @@ from docker.models.containers import Container
 
 from codeit.config import Config
 from codeit.log import get_logger
+from codeit.sandbox.egress import EgressError, EgressSettings, ensure_proxy, proxy_env
 
 log = get_logger(__name__)
 
@@ -51,6 +52,8 @@ class ContainerSpec:
     cpus: float = 2
     mem: str = "4g"
     pids_limit: int = 512
+    # Set: the container joins the proxy's internal network and gets the proxy env.
+    egress: EgressSettings | None = None
 
     @classmethod
     def for_role(
@@ -64,16 +67,18 @@ class ContainerSpec:
         env: Mapping[str, str],
     ) -> ContainerSpec:
         s = cfg.sandbox
+        egress = EgressSettings.from_config(cfg)
         return cls(
             run_id=run_id,
             role=role,
             image=s.image,
             workspace=workspace,
             run_dir=run_dir,
-            env=dict(env),
+            env={**env, **(proxy_env() if egress else {})},
             cpus=s.cpus,
             mem=s.mem,
             pids_limit=s.pids_limit,
+            egress=egress,
         )
 
 
@@ -99,7 +104,7 @@ class Sandbox:
         return self._client
 
     def ensure_network(self) -> str:
-        """A dedicated network for workers. M7 routes its egress through the proxy."""
+        """The plain worker network, used when the egress proxy is off."""
         try:
             self.client.networks.get(NETWORK)
         except NotFound:
@@ -109,6 +114,12 @@ class Sandbox:
     def start(self, spec: ContainerSpec) -> Container:
         spec.workspace.mkdir(parents=True, exist_ok=True)
         spec.run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            network = (
+                ensure_proxy(self.client, spec.egress) if spec.egress else self.ensure_network()
+            )
+        except (EgressError, APIError) as e:
+            raise SandboxError(f"cannot set up the worker network: {e}") from e
         try:
             container: Container = self.client.containers.run(
                 spec.image,
@@ -122,7 +133,7 @@ class Sandbox:
                     str(spec.workspace.resolve()): {"bind": WORKSPACE, "mode": "rw"},
                     str(spec.run_dir.resolve()): {"bind": RUN_DIR, "mode": "rw"},
                 },
-                network=self.ensure_network(),
+                network=network,
                 extra_hosts={"host.docker.internal": "host-gateway"},
                 nano_cpus=int(spec.cpus * 1e9),
                 mem_limit=spec.mem,
@@ -200,6 +211,14 @@ class Sandbox:
             container.remove(force=True)
         except NotFound:
             pass
+
+    def remove_run(self, run_id: str) -> list[str]:
+        """Remove the containers of one run, e.g. an abandoned one. Returns their names."""
+        removed = []
+        for c in self.client.containers.list(all=True, filters={"label": f"{LABEL}={run_id}"}):
+            c.remove(force=True)
+            removed.append(str(c.name))
+        return removed
 
     def reap(self) -> list[str]:
         """Remove every CodeIt worker container, e.g. left behind by a crash."""

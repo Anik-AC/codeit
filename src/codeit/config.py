@@ -106,6 +106,11 @@ class SandboxConfig(_Strict):
         default_factory=lambda: _role_ints(coder=60, reviewer=30, rebase=20)
     )
     egress_allowlist: list[str] = Field(default_factory=list)
+    # Route worker traffic through the allowlisting proxy (ADR-0013). Off only for debugging.
+    egress_proxy: bool = True
+    proxy_image: Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$")] = (
+        "codeit-proxy:0.1.0"
+    )
 
 
 class McpConfig(_Strict):

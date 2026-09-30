@@ -24,11 +24,12 @@ from codeit.sandbox.containers import (
 from tests.conftest import REPO_ROOT
 
 CFG = load_config(REPO_ROOT / "config" / "config.yaml")
+PLAIN = CFG.model_copy(update={"sandbox": CFG.sandbox.model_copy(update={"egress_proxy": False})})
 
 
 def spec(tmp_path: Path, **env: str) -> ContainerSpec:
     return ContainerSpec.for_role(
-        CFG,
+        PLAIN,
         run_id="01ABC",
         role="coder",
         workspace=tmp_path / "ws",

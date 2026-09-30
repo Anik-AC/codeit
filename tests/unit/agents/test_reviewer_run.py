@@ -223,10 +223,9 @@ async def test_clean_pr_passes_to_human(
         "ci_status",
     ]
     assert result.phase1.test_files == ["tests/unit/count.test.ts"]
-    assert sandbox.specs[0].role == "reviewer" and sandbox.specs[0].env == {
-        "GH_TOKEN": "gh-read",
-        "CI": "1",
-    }
+    env = sandbox.specs[0].env
+    assert sandbox.specs[0].role == "reviewer" and (env["GH_TOKEN"], env["CI"]) == ("gh-read", "1")
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env and env["HTTPS_PROXY"].endswith(":8888")
     review = github.routes[2].calls.last.request
     assert review.headers["Authorization"] == "Bearer gh-write"
     assert json.loads(review.content)["event"] == "COMMENT"
@@ -298,6 +297,7 @@ async def test_closed_pr_escalates(
     cfg: Config, jira: respx.MockRouter, github: respx.MockRouter
 ) -> None:
     ticket(jira, "Agent Review", pr=None)
+    github.get(f"{SLUG}/pulls").respond(json=[])  # nothing on the branch either
     result = await run_reviewer(
         cfg,
         SECRETS,
@@ -356,3 +356,50 @@ def test_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["run", "reviewer", "codeit-9", "--ids", str(ids)])
     assert result.exit_code == 0, result.output
     assert "verdict: incomplete" in result.output and "review: u" in result.output
+
+
+async def test_merged_pr_skips_the_review(
+    cfg: Config, jira: respx.MockRouter, github: respx.MockRouter
+) -> None:
+    github.get(f"{SLUG}/pulls/12").respond(
+        json={
+            "number": 12,
+            "html_url": PR_URL,
+            "state": "closed",
+            "merged": True,
+            "head": {"ref": "CODEIT-9-count", "sha": "HEADSHA"},
+            "base": {"ref": "main", "sha": "b"},
+        }
+    )
+    ticket(jira, "Agent Review")
+    sandbox = FakeSandbox()
+    result = await run_reviewer(
+        cfg,
+        SECRETS,
+        IDS,
+        KEY,
+        sandbox=sandbox,
+        backends=[],
+        echo=lambda _: None,  # type: ignore[arg-type]
+    )
+    assert (result.routing.reason, result.routing.needs_human) == ("already merged", False)
+    assert moves(jira) == ["Human Review"] and sandbox.specs == []
+
+
+async def test_pr_found_by_branch_when_the_field_is_empty(
+    cfg: Config, jira: respx.MockRouter, github: respx.MockRouter
+) -> None:
+    ticket(jira, "Agent Review", "Agent Review", pr=None)
+    github.get(f"{SLUG}/pulls").respond(json=[{"number": 12}])
+    result = await run_reviewer(
+        cfg,
+        SECRETS,
+        IDS,
+        KEY,
+        sandbox=FakeSandbox(failing=("npm test -- --run tests/",)),
+        backends=[FakeBackend("rev", [PASS])],  # type: ignore[list-item]
+        ci_wait_s=0,
+        echo=lambda _: None,
+    )
+    assert result.routing.route == "human_review" and result.review_url
+    assert {"fields": {FIELDS.pr_url: PR_URL}} in sent(jira.routes[1])

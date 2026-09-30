@@ -63,7 +63,18 @@ class CloneManager:
         return self.clones / key
 
     async def refresh_mirror(self) -> Path:
-        """Clone the target repo once, then keep it at `origin/{default}`."""
+        """Clone the target repo once, then keep it at `origin/{default}`. A mirror git
+        cannot use (e.g. empty object files after a hard restart) is cloned again."""
+        try:
+            return await self._refresh_mirror()
+        except GitError as e:
+            if not (self.mirror / ".git").is_dir():
+                raise
+            log.warning("clone.broken_mirror_recloning", error=str(e)[:300])
+            shutil.rmtree(self.mirror)
+            return await self._refresh_mirror()
+
+    async def _refresh_mirror(self) -> Path:
         base = f"origin/{self.default_branch}"
         if not (self.mirror / ".git").is_dir():
             self.mirror.parent.mkdir(parents=True, exist_ok=True)
@@ -79,19 +90,32 @@ class CloneManager:
         await self.refresh_mirror()
         path = self.path_for(key)
         base = f"origin/{self.default_branch}"
-        if not (path / ".git").is_dir():
-            shutil.rmtree(path, ignore_errors=True)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            await self.git.run("clone", "--no-checkout", str(self.mirror), str(path))
-            await self.git.run("remote", "set-url", "origin", self.remote_url, cwd=path)
-            await self._set_identity(path)
-            await self.git.run("fetch", "origin", cwd=path)
-            # A branch already on GitHub (a crashed earlier run) is resumed, not recreated.
-            start = f"origin/{branch}" if await self._remote_has(path, branch) else base
-            await self.git.run("checkout", "-B", branch, start, cwd=path)
-            return Prepared(path, branch, created=True, head=await self._head(path))
+        if (path / ".git").is_dir():
+            try:
+                return await self._rework(path, key, branch, base)
+            except GitError as e:
+                # A run killed mid-git (a crash, Docker restarting) can leave the clone
+                # broken. What matters is on GitHub, so start over from there.
+                log.warning("clone.broken_recloning", key=key, error=str(e)[:300])
+        return await self._fresh(path, branch, base)
 
+    async def _fresh(self, path: Path, branch: str, base: str) -> Prepared:
+        shutil.rmtree(path, ignore_errors=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await self.git.run("clone", "--no-checkout", str(self.mirror), str(path))
+        await self.git.run("remote", "set-url", "origin", self.remote_url, cwd=path)
         await self._set_identity(path)
+        await self.git.run("fetch", "origin", cwd=path)
+        # A branch already on GitHub (a crashed earlier run) is resumed, not recreated.
+        start = f"origin/{branch}" if await self._remote_has(path, branch) else base
+        await self.git.run("checkout", "-B", branch, start, cwd=path)
+        return Prepared(path, branch, created=True, head=await self._head(path))
+
+    async def _rework(self, path: Path, key: str, branch: str, base: str) -> Prepared:
+        await self._set_identity(path)
+        # Uncommitted edits are leftovers of a run that died; committed work is kept.
+        await self.git.run("reset", "--hard", cwd=path)
+        await self.git.run("clean", "-fd", cwd=path)
         await self.git.run("fetch", "origin", cwd=path)
         await self.git.run("checkout", branch, cwd=path)
         if await self._remote_has(path, branch):
@@ -116,6 +140,16 @@ class CloneManager:
         review never sees or changes the Coder's working state."""
         await self.refresh_mirror()
         path = self.clones / f"{key}-review"
+        try:
+            return await self._checkout_review(path, sha)
+        except GitError as e:
+            if not (path / ".git").is_dir():
+                raise
+            log.warning("clone.broken_review_recloning", key=key, error=str(e)[:300])
+            shutil.rmtree(path)
+            return await self._checkout_review(path, sha)
+
+    async def _checkout_review(self, path: Path, sha: str) -> Path:
         if not (path / ".git").is_dir():
             shutil.rmtree(path, ignore_errors=True)
             path.parent.mkdir(parents=True, exist_ok=True)

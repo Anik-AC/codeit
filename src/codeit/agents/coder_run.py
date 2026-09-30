@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -54,7 +54,7 @@ from codeit.model_env import claude_model
 from codeit.orchestrator.leases import LeaseStore
 from codeit.prompts import prompt_hash
 from codeit.run_tokens import RunTokenStore, token_ttl
-from codeit.runs import finish_run, previous_run_start, record_run
+from codeit.runs import finish_run, previous_run_start, previous_run_status, record_run
 from codeit.sandbox.clone import CloneManager, Prepared, branch_name
 from codeit.sandbox.containers import ContainerSpec, Sandbox
 from codeit.sandbox.runner import role_env, write_mcp_config
@@ -64,8 +64,8 @@ from mcp_servers.jira.server import JiraContext
 log = get_logger(__name__)
 
 READY, IN_DEV = "Ready for Dev", "In Dev"
+RESUMED = frozenset({"abandoned", "interrupted"})
 AGENT_REVIEW, HUMAN_REVIEW = "Agent Review", "Human Review"
-HEARTBEAT_S = 60
 
 Echo = Callable[[str], None]
 
@@ -110,24 +110,6 @@ async def _existing_pr(
     if number is not None:
         return await get_pr(gh, slug, number)
     return await find_pr(gh, slug, branch)
-
-
-@contextlib.asynccontextmanager
-async def _heartbeat(
-    leases: LeaseStore, key: str, run_id: str, ttl: timedelta
-) -> AsyncIterator[None]:
-    async def beat() -> None:
-        while True:
-            await asyncio.sleep(HEARTBEAT_S)
-            leases.heartbeat(key, run_id, ttl)
-
-    task = asyncio.create_task(beat())
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
 
 
 async def _run_agent(
@@ -214,6 +196,7 @@ async def run_coder(
     key: str,
     *,
     instance: str = "coder-1",
+    run_id: str | None = None,
     sandbox: Sandbox | None = None,
     echo: Echo = print,
 ) -> CoderRun:
@@ -227,7 +210,7 @@ async def run_coder(
     )
     repo = cfg.project.target_repo
     slug = repo_slug(repo.url)
-    run_id = str(ULID())
+    run_id = run_id or str(ULID())
     db.upgrade(cfg.db_path)
     engine = db.make_engine(cfg.db_path)
     leases = LeaseStore(engine)
@@ -241,7 +224,11 @@ async def run_coder(
     outcome: Outcome | None = None
     agent: AgenticResult | None = None
     try:
-        async with JiraClient.from_secrets(secrets) as jira, GitHubClient(read_token) as gh:
+        async with (
+            leases.keep_alive(key, run_id, lease_ttl),
+            JiraClient.from_secrets(secrets) as jira,
+            GitHubClient(read_token) as gh,
+        ):
             ticket = await get_ticket(jira, key, ids.fields)
             if ticket.status != READY:
                 raise CoderError(f"{key} is in {ticket.status!r}, not {READY!r}")
@@ -254,6 +241,9 @@ async def run_coder(
                 prompt_hash=prompt_hash(ROLE),
             )
             previous = previous_run_start(engine, ROLE, key, run_id)
+            # After a crash the dead run's container may have finished the work and
+            # pushed it; then an open PR is the result even with no new commits now.
+            resumed = previous_run_status(engine, ROLE, key, run_id) in RESUMED
             cache = TransitionCache(ids.transitions)
             await transition_to(jira, key, IN_DEV, cache)
             claimed = True
@@ -293,10 +283,7 @@ async def run_coder(
                 token = tokens.mint(ROLE, run_id, key, token_ttl(cfg, ROLE))
                 mcp_config = write_mcp_config(cfg.data_dir / "runs" / run_id, cfg, token)
                 jira_ctx = JiraContext(jira, ids, cfg.project.jira_project_key)
-                async with (
-                    running_http_server(jira_ctx, cfg, tokens),
-                    _heartbeat(leases, key, run_id, lease_ttl),
-                ):
+                async with running_http_server(jira_ctx, cfg, tokens):
                     limit = cfg.sandbox.timeouts_minutes.get(ROLE, 60)
                     echo(f"{key}: agent running (limit {limit} min)")
                     agent = await _run_agent(
@@ -315,7 +302,7 @@ async def run_coder(
                 verified = (
                     pr_after is not None
                     and pr_after.state == "open"
-                    and pr_after.head_sha != head_before
+                    and (pr_after.head_sha != head_before or resumed)
                 )
                 outcome = decide(
                     agent,

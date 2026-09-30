@@ -49,6 +49,9 @@ openrouter:
 
 sandbox:
   image: codeit-worker:0.1.0
+  # Workers reach the internet only through this proxy, and only the hosts below (ADR-0013).
+  egress_proxy: true
+  proxy_image: codeit-proxy:0.1.0
   cpus: 2
   mem: 4g
   pids_limit: 512
@@ -66,6 +69,7 @@ sandbox:
     - pypi.org
     - files.pythonhosted.org
     - playwright.azureedge.net
+    # jira-mcp on the host (mcp.container_host:mcp.port) is added automatically.
     # The Jira site is deliberately absent: containers reach Jira only via the
     # host-side jira-mcp (PRD 15, ADR-0004).
 

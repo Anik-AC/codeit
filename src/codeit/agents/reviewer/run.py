@@ -50,17 +50,18 @@ from codeit.backends.base import BackendUnavailable, ChatBackend
 from codeit.backends.registry import chat_route
 from codeit.config import Config, Secrets
 from codeit.git import Git
-from codeit.github_client import GitHubClient, repo_slug
-from codeit.github_client.prs import check_runs, get_pr, post_review
+from codeit.github_client import GitHubClient, PullRequest, repo_slug
+from codeit.github_client.prs import check_runs, find_pr, get_pr, post_review
 from codeit.jira_client import JiraClient, JiraIds
 from codeit.jira_client.comments import add_comment, list_comments
 from codeit.jira_client.issues import add_labels, get_ticket, update_fields
 from codeit.jira_client.transitions import TransitionCache, transition_to
 from codeit.log import bind_run, clear_run, get_logger
+from codeit.orchestrator.budget import record_spend
 from codeit.orchestrator.leases import LeaseStore
 from codeit.prompts import prompt_hash
 from codeit.runs import finish_run, previous_run_start, record_run
-from codeit.sandbox.clone import CloneManager
+from codeit.sandbox.clone import CloneManager, branch_name
 from codeit.sandbox.containers import ContainerSpec, Sandbox
 from codeit.sandbox.runner import role_env
 from codeit.target import load_target_config
@@ -107,6 +108,7 @@ async def run_reviewer(
     key: str,
     *,
     instance: str = "reviewer-1",
+    run_id: str | None = None,
     sandbox: Sandbox | None = None,
     backends: Sequence[ChatBackend] | None = None,
     ci_wait_s: float = 600,
@@ -122,7 +124,7 @@ async def run_reviewer(
     )
     repo = cfg.project.target_repo
     slug = repo_slug(repo.url)
-    run_id = str(ULID())
+    run_id = run_id or str(ULID())
     db.upgrade(cfg.db_path)
     engine = db.make_engine(cfg.db_path)
     leases = LeaseStore(engine)
@@ -134,6 +136,7 @@ async def run_reviewer(
     started = False
     try:
         async with (
+            leases.keep_alive(key, run_id, ttl),
             JiraClient.from_secrets(secrets) as jira,
             GitHubClient(read_token) as gh,
             GitHubClient(write_token) as gh_write,
@@ -159,11 +162,32 @@ async def run_reviewer(
             echo(f"{key}: review {run_id} by {instance}")
 
             number = _pr_number(ticket.pr_url)
-            pr = await get_pr(gh, slug, number) if number else None
+            pr: PullRequest | None
+            if number:
+                pr = await get_pr(gh, slug, number)
+            else:
+                # No PR URL on the ticket (e.g. a crashed Coder run): look by its branch.
+                pr = await find_pr(gh, slug, branch_name(key, ticket.summary))
+                if pr is not None:
+                    await update_fields(jira, key, ids.fields.ids(pr_url=pr.url))
+            if pr is not None and pr.merged:
+                # A human merged it before the review: nothing to review; the merge
+                # watcher moves it on to Done.
+                routing = Routing("human_review", ticket.review_loop, False, "already merged")
+                await add_comment(
+                    jira, key, orchestrator_comment(f"{pr.url} is already merged; no review.")
+                )
+                await transition_to(jira, key, HUMAN_REVIEW, cache)
+                finish_run(
+                    engine, run_id, ROLE, {"status": "skipped", "result_json": {"merged": True}}
+                )
+                echo(f"{key}: PR already merged -> human_review")
+                return ReviewRun(run_id, key, None, Phase1(), routing, "", True)
             if pr is None or pr.state != "open":
                 why = "no pull request" if pr is None else f"the pull request is {pr.state}"
                 routing = Routing("human_review", ticket.review_loop, True, why)
                 await _escalate(jira, key, cache, f"Cannot review: {why}. Labelled `needs-human`.")
+                echo(f"{key}: cannot review ({why}) -> human_review")
                 finish_run(
                     engine, run_id, ROLE, {"status": "incomplete", "result_json": {"reason": why}}
                 )
@@ -249,6 +273,15 @@ async def run_reviewer(
             except BackendUnavailable as e:
                 log.warning("reviewer.model_unavailable", reason=str(e))
                 echo(f"{key}: model review unavailable ({e})")
+            if call is not None:
+                record_spend(
+                    engine,
+                    backend=call.backend,
+                    role=ROLE,
+                    usd=call.cost_usd,
+                    requests=call.calls,
+                    note=f"review {run_id}",
+                )
             has_criteria = "acceptance criteria" in ticket.description_md.lower()
             verdict = apply_override(verdict, phase1, has_criteria=has_criteria)
             routing = route(verdict, ticket.review_loop, cfg.orchestrator.max_review_loops)
@@ -261,7 +294,10 @@ async def run_reviewer(
             )
             applied = await _apply_routing(jira, ids, key, routing, ticket.review_loop, cache)
             name = verdict.verdict if verdict else "incomplete"
-            echo(f"{key}: {name} -> {routing.route} ({routing.reason})")
+            echo(
+                f"{key}: {name} -> {routing.route} ({routing.reason})"
+                + ("" if applied else "; ticket moved by a human, left as is")
+            )
             finish_run(
                 engine,
                 run_id,

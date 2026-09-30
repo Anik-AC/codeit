@@ -27,6 +27,7 @@ from codeit.config import Config, Secrets, load_config
 from codeit.db.models import McpToken, Run
 from codeit.jira_client import JiraIds
 from codeit.orchestrator.leases import LeaseStore
+from codeit.runs import record_run
 from codeit.sandbox.clone import Prepared
 from codeit.sandbox.containers import ExecResult
 from tests.conftest import REPO_ROOT
@@ -199,7 +200,8 @@ async def test_new_ticket_to_agent_review(
 
     spec = sandbox.specs[0]
     assert spec.role == "coder" and spec.workspace.name == KEY
-    assert spec.env == {"CLAUDE_CODE_OAUTH_TOKEN": "oauth", "GH_TOKEN": "gh-agent"}
+    assert spec.env["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth" and spec.env["GH_TOKEN"] == "gh-agent"
+    assert spec.env["HTTPS_PROXY"] == "http://codeit-proxy:8888" and spec.egress is not None
     argv = sandbox.argv
     assert argv[argv.index("--mcp-config") + 1] == "/run/codeit/mcp.json"
     assert "mcp__codeit-jira__add_comment" in argv[argv.index("--allowedTools") + 1]
@@ -245,6 +247,27 @@ async def test_claimed_pr_without_new_commits_is_not_trusted(
     run = await run_coder(cfg, SECRETS, IDS, KEY, sandbox=sandbox, echo=lambda _: None)  # type: ignore[arg-type]
     assert run.outcome.status == "failed" and "no open PR with new commits" in run.outcome.comment
     assert transitions(jira) == ["In Dev", "Human Review"]
+
+
+async def test_resumed_run_accepts_the_dead_runs_pr(
+    cfg: Config, jira: respx.MockRouter, github: respx.MockRouter
+) -> None:
+    """The killed run's container pushed the work before it was reaped: nothing is left
+    to commit, and the open PR goes to review."""
+    db.upgrade(cfg.db_path)
+    record_run(db.make_engine(cfg.db_path), "OLD", "coder", ticket_key=KEY, status="abandoned")
+    ticket_statuses(
+        jira, "Ready for Dev", "In Dev", **{FIELDS.pr_url: f"https://github.com{SLUG[6:]}/pull/7"}
+    )
+    github.get(f"{SLUG}/pulls/7").respond(json=pr_json(sha="same"))
+    github.get(f"{SLUG}/pulls").respond(json=[{"number": 7}])
+    for path in ("reviews", "comments"):
+        github.get(f"{SLUG}/pulls/7/{path}").respond(json=[])
+    github.get(f"{SLUG}/issues/7/comments").respond(json=[])
+    sandbox = FakeSandbox([result_line("pr_updated", "https://x/pull/7")])
+    run = await run_coder(cfg, SECRETS, IDS, KEY, sandbox=sandbox, echo=lambda _: None)  # type: ignore[arg-type]
+    assert run.outcome.action == "agent_review"
+    assert transitions(jira) == ["In Dev", "Agent Review"]
 
 
 async def test_rework_reuses_branch_and_passes_feedback(

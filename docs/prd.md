@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.7 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0012)
+**Status:** Draft v1.8 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0013)
 **Date:** 2026-09-29
 
 ---
@@ -456,6 +456,7 @@ Uses the Python Docker SDK.
   - **The Jira site host is not on the allowlist.** Containers have no Jira credential and no route to Jira. Their only path to Jira is the host jira-mcp endpoint (Section 15).
   - **Host reachability:** jira-mcp binds to 127.0.0.1 on the host (not the LAN); containers reach it as `http://host.docker.internal:8765/mcp`. Verified on Docker Desktop + WSL2 in M4 (ADR-0009).
   - **Fallback if the proxy is deferred:** M4 may start with an unrestricted network, but the proxy must land before M7 is complete.
+  - **As built (ADR-0013):** set up with the Docker SDK rather than compose: an internal `codeit-workers` network plus a tinyproxy container. Filtering is by URL, and jira-mcp is reachable on its port only. Claude containers set `MCP_CONNECTION_NONBLOCKING=0` so MCP tools are loaded before the first turn.
 - **Teardown:** containers are removed after the run. Logs are kept.
 
 ## 11. Agent specifications
@@ -721,6 +722,7 @@ leases.reap_expired()                      # expired lease -> retry or escalate 
 - SQLite table `leases(ticket_key PK, role, instance, run_id, acquired_at, expires_at, heartbeat_at)`.
 - Running jobs heartbeat every 60 seconds.
 - **An expired lease** marks the run `abandoned`, kills the container if it's still alive, and applies the transition rules in 6.2.
+- **As built (ADR-0013):** a lease whose heartbeat stopped for 3 minutes also counts as dead, so recovery after a crash does not wait for the TTL. At startup, `In Dev` tickets with no lease and an unfinished Coder run are recovered too.
 
 ### 12.5 Idempotency
 
