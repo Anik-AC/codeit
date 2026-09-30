@@ -83,6 +83,35 @@ The PRD leaves open how the tasks are pinned and written, how hidden tests are c
 - **Storage:** results go to `eval_runs` and `eval_results` (PRD 13). The notes hold the Coder's status, hidden-test failures, and the checks and findings of any review.
 - **Dashboard:** an Evals page charts pass@1 over time, one colour per steering hash, and each run has a detail page.
 
+### What the evals changed in the Reviewer
+
+The first seeded-bug runs found two flaws in the Reviewer (ADR-0012).
+
+1. **Good work was failed.**
+   - The verdict rules said `pass` allows no major finding, and `pass_with_notes` needs every criterion fully met. A correct patch with one "thinly tested" criterion fit neither.
+   - The model then answered `fail_critical`: 5 of 6 correct patches were failed (run `01M3RN48FE...`, stopped early, kept as the baseline).
+   - **Fix:**
+     - The rules now say only an unmet criterion or a critical finding means `fail_critical`; major notes and partial coverage mean `pass_with_notes`.
+     - `consistent()` makes the verdict follow the model's own lists.
+2. **The first fix overcorrected.**
+   - The model sometimes put its reasoning only in `summary_md`, with empty `ac_coverage` and `findings`, for example "SQL injection; criterion 4 unmet; must fix".
+   - `consistent()` then saw no critical finding and downgraded the verdict: 21% of mutants caught, 0% false fails.
+   - **Fix:**
+     - For a ticket with acceptance criteria, the answer must list every criterion (`ReviewAnswer`, min 1 entry), or it is sent back once.
+     - A `fail_critical` is only lowered when the model gave a coverage list.
+     - The prompt asks for every problem named in the summary to be a finding.
+
+**Final run** (`01M3RQC3W0...`, deepseek-v4.1-flash, 36 reviews, $0.14):
+
+| Metric | Result | PRD 11.3 target |
+|---|---|---|
+| Critical catch rate | 95.8% (23 of 24) | at least 70% |
+| False-fail rate | 0% (0 of 12) | at most 20% |
+
+Every mutant kind was caught every time, except `test_asserts_nothing` at 2 of 3. The miss was T008 M2, whose test still checks that the search box exists; it gets through as `pass_with_notes` with the weak test noted.
+
+The Coder acceptance run, `eval run --tasks T001,T004 --repeats 3 --review`, gave pass@1 1.00 and pass^3 1.00, with a median of 132 s, 34 turns and $0.28 per task (Claude Code's own cost estimate; runs are on the subscription). It also found the Coder writing its RESULT line as `key=value` in local mode. The parser now accepts that, and the local prompt shows the exact JSON line.
+
 ### Not in M9
 
 - **Planner evals (PRD 17.5)** are not part of the plan's M9 scope. They move to M12, where the Learning agent needs them.
