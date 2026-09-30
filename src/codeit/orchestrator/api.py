@@ -36,6 +36,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from codeit.config import Config
 from codeit.db.models import AgentInstance, EvalResult, EvalRun, Event, Run
+from codeit.orchestrator import settings as runtime_settings
 from codeit.orchestrator import tickets_cache
 from codeit.orchestrator.budget import Budget
 from codeit.orchestrator.bus import EventBus
@@ -140,6 +141,10 @@ class LoginBody(BaseModel):
     token: str
 
 
+class SettingsPatch(BaseModel):
+    fast_lane: bool | None = None
+
+
 class RunRequest(BaseModel):
     ticket_key: str | None = None
 
@@ -192,6 +197,7 @@ def create_app(ctx: ApiContext) -> FastAPI:
                 "running": True,
                 "agents": ctx.orchestrator.agent_states(),
                 "slots": dict(ctx.orchestrator.slots),
+                "fast_lane": ctx.orchestrator.fast_lane,
             }
         with Session(ctx.engine) as s:
             rows = s.scalars(select(AgentInstance).order_by(AgentInstance.name))
@@ -199,7 +205,12 @@ def create_app(ctx: ApiContext) -> FastAPI:
                 {"name": r.name, "role": r.role, "state": r.state, "run_id": r.current_run_id}
                 for r in rows
             ]
-        return {"running": False, "agents": listed, "slots": dict(ctx.cfg.slots)}
+        return {
+            "running": False,
+            "agents": listed,
+            "slots": dict(ctx.cfg.slots),
+            "fast_lane": runtime_settings.load(ctx.cfg.data_dir).fast_lane,
+        }
 
     @app.patch("/api/agents/slots")
     async def slots(_: Auth, changes: Annotated[dict[str, int], Body()]) -> dict[str, Any]:
@@ -207,6 +218,21 @@ def create_app(ctx: ApiContext) -> FastAPI:
             return {"slots": orchestrator().set_slots(changes)}
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+
+    # runtime settings ------------------------------------------------------------------
+
+    @app.get("/api/settings")
+    async def get_settings(_: Auth) -> dict[str, Any]:
+        return runtime_settings.load(ctx.cfg.data_dir).model_dump(mode="json")
+
+    @app.patch("/api/settings")
+    async def patch_settings(_: Auth, body: SettingsPatch) -> dict[str, Any]:
+        if body.fast_lane is not None:
+            if ctx.orchestrator is not None:
+                await ctx.orchestrator.set_fast_lane(body.fast_lane, by="dashboard")
+            else:
+                runtime_settings.save(ctx.cfg.data_dir, by="dashboard", fast_lane=body.fast_lane)
+        return runtime_settings.load(ctx.cfg.data_dir).model_dump(mode="json")
 
     # tickets and runs --------------------------------------------------------------------
 

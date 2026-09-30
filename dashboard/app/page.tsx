@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { AnimatedNumber } from "@/components/animated-number";
+import { FastLaneControl } from "@/components/fast-lane";
 import { LogoMark } from "@/components/logo";
 import { PipelineFlow } from "@/components/pipeline-flow";
 import { Badge, runTone } from "@/components/ui/badge";
@@ -304,6 +305,8 @@ export default function AgentsPage() {
         </p>
       )}
 
+      <FastLaneControl />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat i={0} label="Working now" value={list.filter((a) => a.state === "busy").length} color="var(--coder)" />
         <Stat i={1} label="Waiting for you" value={ticketList.filter((t) => t.status === "Human Review").length} color="var(--human)" />
@@ -319,7 +322,7 @@ export default function AgentsPage() {
           </Link>
         </CardHeader>
         <CardBody className="py-6">
-          <PipelineFlow tickets={ticketList} agents={list} />
+          <PipelineFlow tickets={ticketList} agents={list} fastLane={agents.data?.fast_lane ?? false} />
         </CardBody>
       </Card>
 

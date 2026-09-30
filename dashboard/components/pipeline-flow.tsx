@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { AnimatedNumber } from "@/components/animated-number";
 import type { Agent, Ticket } from "@/lib/types";
@@ -84,19 +84,65 @@ function Connector({ id, from, to, active }: { id: string; from: string; to: str
   );
 }
 
-export function PipelineFlow({ tickets, agents }: { tickets: Ticket[]; agents: Agent[] }) {
+/** Drawn over the Review stage while the fast lane is on: work goes from Code to You. */
+function Bypass() {
+  return (
+    <motion.svg
+      viewBox="0 0 300 40"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute -top-9 left-1/2 h-10 w-[290%] -translate-x-1/2"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id="bypass" gradientUnits="userSpaceOnUse" x1="0" x2="300" y1="0" y2="0">
+          <stop offset="0%" style={{ stopColor: "var(--coder)" }} />
+          <stop offset="100%" style={{ stopColor: "var(--human)" }} />
+        </linearGradient>
+      </defs>
+      <path
+        d="M20 38 C 90 2, 210 2, 280 38"
+        fill="none"
+        stroke="url(#bypass)"
+        strokeWidth="2.6"
+        className="anim-flow"
+        style={{ animationDuration: "0.6s" }}
+        vectorEffect="non-scaling-stroke"
+      />
+    </motion.svg>
+  );
+}
+
+export function PipelineFlow({
+  tickets,
+  agents,
+  fastLane = false,
+}: {
+  tickets: Ticket[];
+  agents: Agent[];
+  fastLane?: boolean;
+}) {
   const busyRoles = new Set(agents.filter((a) => a.state === "busy").map((a) => a.role));
   const count = (statuses: readonly string[]) => tickets.filter((t) => statuses.includes(t.status)).length;
   return (
-    <div className="overflow-x-auto pt-3">
+    <div className={fastLane ? "overflow-x-auto pt-11" : "overflow-x-auto pt-3"}>
       <div className="grid min-w-[620px] grid-cols-[repeat(4,minmax(0,1fr)_minmax(24px,0.5fr))_minmax(0,1fr)] items-center">
         {STAGES.map((stage, i) => {
-          const active = busyRoles.has(stage.role);
+          const skipped = fastLane && stage.id === "review";
+          const active = busyRoles.has(stage.role) && !skipped;
           const n = count(stage.statuses);
           const next = STAGES[i + 1];
           return (
             <div key={stage.id} className="contents">
-              <Link href="/pipeline/" className="group flex flex-col items-center gap-2 text-center">
+              <div className="relative">
+              <AnimatePresence>{skipped && <Bypass />}</AnimatePresence>
+              <Link
+                href="/pipeline/"
+                className="group flex flex-col items-center gap-2 text-center transition-opacity"
+                style={{ opacity: skipped ? 0.4 : 1 }}
+              >
                 <motion.span
                   className="relative grid size-14 place-items-center rounded-2xl border"
                   style={{
@@ -119,10 +165,16 @@ export function PipelineFlow({ tickets, agents }: { tickets: Ticket[]; agents: A
                   )}
                 </motion.span>
                 <span className="font-display text-sm font-semibold">{stage.label}</span>
-                <span className="text-[11px] text-faint">{stage.hint}</span>
+                <span className="text-[11px] text-faint">{skipped ? "skipped: fast lane" : stage.hint}</span>
               </Link>
+              </div>
               {next && (
-                <Connector id={stage.id} from={stage.color} to={next.color} active={busyRoles.has(next.role)} />
+                <Connector
+                  id={stage.id}
+                  from={stage.color}
+                  to={next.color}
+                  active={busyRoles.has(next.role) && !(fastLane && (stage.id === "code" || stage.id === "review"))}
+                />
               )}
             </div>
           );

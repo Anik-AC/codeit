@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.10 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0015)
+**Status:** Draft v1.11 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0016)
 **Date:** 2026-09-29
 
 ---
@@ -178,6 +178,7 @@ The orchestrator is a thin, deterministic layer on top. That gives one source of
 
 **Rules:**
 
+0. **Fast lane (ADR-0016).** While the owner's `fast_lane` switch is on, `Agent Review` tickets move straight to `Human Review` with the label `fast-lane`, and no Reviewer runs start.
 1. **Re-entry context.** When a ticket re-enters `Ready for Dev` or `Agent Review`, the orchestrator collects every human and reviewer comment since the last agent run on that ticket (Jira comments + PR review comments). It passes them to the agent as `feedback`.
 2. **Coder rework reuses the same branch and PR.** It never opens a second PR for a ticket.
 3. **`Review Loop` counts only Reviewer bounces.** Human send-backs increment the separate field `Human Returns`.

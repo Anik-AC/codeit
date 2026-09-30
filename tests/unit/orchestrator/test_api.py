@@ -303,3 +303,19 @@ def test_eval_runs(client: TestClient, engine: Engine) -> None:
     detail = client.get("/api/evals/E1", headers=BEARER).json()
     assert detail["results"][0]["notes"] == {"coder": "committed"}
     assert detail["steering_sha"] == "abc123def456"
+
+
+def test_settings_without_orchestrator(client: TestClient) -> None:
+    assert client.get("/api/settings", headers=BEARER).json()["fast_lane"] is False
+    r = client.patch("/api/settings", headers=BEARER, json={"fast_lane": True})
+    assert r.json()["fast_lane"] is True and r.json()["changed_by"] == "dashboard"
+    assert client.get("/api/agents", headers=BEARER).json()["fast_lane"] is True
+    assert client.patch("/api/settings", json={"fast_lane": False}).status_code == 401
+
+
+def test_settings_with_orchestrator(cfg: Config, engine: Engine) -> None:
+    orch = MagicMock()
+    orch.set_fast_lane = AsyncMock(return_value=True)
+    with TestClient(create_app(context(cfg, engine, orchestrator=orch))) as c:
+        c.patch("/api/settings", headers=BEARER, json={"fast_lane": True})
+    orch.set_fast_lane.assert_awaited_once_with(True, by="dashboard")

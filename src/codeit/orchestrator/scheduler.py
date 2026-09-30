@@ -45,9 +45,11 @@ from codeit.jira_client import JiraClient, JiraIds, JiraNotFound
 from codeit.jira_client.issues import get_ticket
 from codeit.jira_client.search import search_tickets
 from codeit.log import get_logger
+from codeit.orchestrator import settings as runtime_settings
 from codeit.orchestrator import tickets_cache
 from codeit.orchestrator.budget import CLAUDE_ROLES, Budget
 from codeit.orchestrator.bus import EventBus
+from codeit.orchestrator.fast_lane import fast_track
 from codeit.orchestrator.leases import LeaseStore
 from codeit.orchestrator.merge_watcher import MergeWatcher
 from codeit.orchestrator.reaper import Reaper, mark_runs
@@ -143,6 +145,7 @@ class Orchestrator:
             **{str(k): v for k, v in cfg.slots.items()},
             **self.slot_overrides,
         }
+        self.fast_lane = runtime_settings.load(cfg.data_dir).fast_lane
         self._published_states: list[dict[str, Any]] = []
         self._published_budget: dict[str, Any] | None = None
         self.jobs: dict[str, Job] = {}
@@ -178,7 +181,10 @@ class Orchestrator:
 
     async def tick(self) -> None:
         self._reload_slots()
+        self._reload_settings()
         await self._step("reaper", self._reap)
+        if self.fast_lane:
+            await self._step("fast lane", self._fast_track)
         for role in ROLES:
             await self._step(f"schedule {role}", functools.partial(self._schedule, role))
         await self._step("merge watcher", self._merge)
@@ -198,6 +204,30 @@ class Orchestrator:
         live = {j.run_id for j in self.jobs.values()}
         for r in await self.reaper.reap(live):
             self.echo(f"{r.key}: dead {r.role} run {r.run_id} -> {r.action}")
+
+    def _reload_settings(self) -> None:
+        on = runtime_settings.load(self.cfg.data_dir).fast_lane
+        if on != self.fast_lane:
+            self.echo(f"fast lane {'on' if on else 'off'}")
+            self.fast_lane = on
+            if not on:
+                self.waiting.pop("reviewer", None)
+
+    async def _fast_track(self) -> None:
+        busy = {j.key for j in self.jobs.values()}
+        for key in await fast_track(
+            self.engine, self.jira, self.ids, self.cfg.project.jira_project_key, busy=busy
+        ):
+            self.echo(f"{key}: fast lane -> Human Review (no agent review)")
+
+    async def set_fast_lane(self, on: bool, by: str = "dashboard") -> bool:
+        """Turn the fast lane on or off now (PATCH /api/settings); saved for restarts."""
+        runtime_settings.save(self.cfg.data_dir, by=by, fast_lane=on)
+        self._reload_settings()
+        self._write_instances()
+        if on:
+            await self._step("fast lane", self._fast_track)
+        return self.fast_lane
 
     async def _merge(self) -> None:
         for a in await self.merge_watcher.tick():
@@ -298,6 +328,9 @@ class Orchestrator:
         return len(keys)
 
     async def _schedule(self, role: Role) -> None:
+        if role == "reviewer" and self.fast_lane:
+            self.waiting[role] = "Fast lane is on: reviews are skipped"
+            return
         free = self.slots.get(role, 0) - len(self.busy(role))
         if free <= 0 or role not in self.runners:
             return
@@ -443,9 +476,13 @@ class Orchestrator:
     def _write_instances(self, stopping: bool = False) -> None:
         rows = self.instance_states(stopping)
         states = self.agent_states() if not stopping else []
-        if states != self._published_states:
-            self._published_states = states
-            self.bus.publish("agent_state", {"agents": states, "slots": dict(self.slots)})
+        states_key = [*states, {"fast_lane": self.fast_lane}] if states else states
+        if states_key != self._published_states:
+            self._published_states = states_key
+            self.bus.publish(
+                "agent_state",
+                {"agents": states, "slots": dict(self.slots), "fast_lane": self.fast_lane},
+            )
         with Session(self.engine) as s, s.begin():
             for r in rows:
                 values = {

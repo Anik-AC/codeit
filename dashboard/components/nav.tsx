@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { FastLaneChip } from "@/components/fast-lane";
 import { Logo } from "@/components/logo";
 import { api } from "@/lib/api";
 import { useLiveStatus } from "@/lib/live";
@@ -70,6 +71,7 @@ export function Nav() {
           ))}
         </nav>
         <div className="ml-auto flex items-center gap-4">
+          <FastLaneChip />
           <LiveDot />
           <button
             className="text-xs text-muted transition hover:text-ink"

@@ -244,6 +244,8 @@ Log in with `CODEIT_API_TOKEN` from `.env`; the browser remembers it for 30 days
 | Run | The result (PR, review checks and verdict), orchestrator events, and the live Claude transcript |
 | Budget | Claude window, parking and runs today; OpenRouter spend per role and free requests against their caps |
 
+**Fast lane.** For times of fast delivery, switch on **Fast lane** on the Agents page, or run `uv run codeit fast-lane on`. PRs then skip the Reviewer agent and go straight to Human Review, labelled `fast-lane`. CI still has to pass, and you still merge (ADR-0016). Turn it off the same way.
+
 Slot changes from the dashboard apply to the next claim and are kept in `data/slots.json`, which wins over `config.yaml`. Scripts can call the API with `Authorization: Bearer $CODEIT_API_TOKEN`.
 
 For dashboard development: `cd dashboard && npm run dev` (port 3000, proxies `/api` to 8770).

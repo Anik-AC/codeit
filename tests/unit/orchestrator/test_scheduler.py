@@ -302,3 +302,31 @@ async def test_request_run(
     with pytest.raises(RunRefused, match="no free reviewer slot"):
         await o.request_run("reviewer", "CODEIT-3")
     await o.shutdown(grace_s=0.01)
+
+
+async def test_fast_lane_skips_the_reviewer(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    fake_jira.add("CODEIT-1", "Agent Review")
+    reviewer = FakeRunner(fake_jira, "Human Review")
+    o = orchestrator(cfg, engine, jira, {"reviewer": reviewer})
+    async with o.bus.subscribe() as events:
+        assert await o.set_fast_lane(True) is True
+        seen = []
+        while not events.empty():
+            seen.append(events.get_nowait())
+    assert fake_jira.issues["CODEIT-1"].status == "Human Review"  # moved at once
+    assert reviewer.calls == []
+    assert any(e.type == "agent_state" and e.data["fast_lane"] for e in seen)
+    fake_jira.add("CODEIT-2", "Agent Review")
+    await tick(o)
+    assert reviewer.calls == [] and fake_jira.issues["CODEIT-2"].status == "Human Review"
+    assert states(engine)["reviewer-1"] == "parked"
+
+    again = orchestrator(cfg, engine, jira, {"reviewer": reviewer})  # a restart remembers
+    assert again.fast_lane
+    await again.set_fast_lane(False)
+    fake_jira.add("CODEIT-3", "Agent Review")
+    await tick(again)
+    assert reviewer.calls == [("CODEIT-3", "reviewer-1")]
+    await settle(again)
