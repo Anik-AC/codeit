@@ -69,6 +69,9 @@ class FakeJira:
     def _search(self, request: httpx.Request) -> httpx.Response:
         jql = json.loads(request.content)["jql"]
         self.jql.append(jql)
+        if "status NOT IN (Done, Rejected)" in jql:  # the dashboard's ticket cache
+            found = list(self.issues)
+            return httpx.Response(200, json={"issues": [self._json(k) for k in found]})
         m = re.search(r'status = "?([A-Za-z ]+?)"?(?: AND| ORDER|$)', jql)
         assert m, jql
         found = [k for k, i in self.issues.items() if i.status == m.group(1)]

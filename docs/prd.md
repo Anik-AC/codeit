@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.8 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0013)
+**Status:** Draft v1.9 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0014)
 **Date:** 2026-09-29
 
 ---
@@ -778,6 +778,11 @@ codeit agents                  # show instances
 
 - **Binding:** `127.0.0.1` only.
 - **Auth:** a single bearer token from `.env` (`CODEIT_API_TOKEN`), so other local processes can't trigger runs.
+- **As built (ADR-0014):**
+  - The API also serves the dashboard, exported as static files, on one origin (`api.port`, default 8770).
+  - The browser logs in once, and a `SameSite=Strict`, `HttpOnly` session cookie then authenticates fetches and `EventSource`.
+  - `GET /api/runs/{id}/transcript/stream` (SSE) follows a run's transcript live.
+  - Slot changes are kept in `data/slots.json`.
 
 ## 15. jira-mcp server
 

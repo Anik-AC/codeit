@@ -26,6 +26,7 @@ jira_app = typer.Typer(help="Jira setup checks and ID discovery.", no_args_is_he
 sandbox_app = typer.Typer(help="Worker image and clone management.", no_args_is_help=True)
 eval_app = typer.Typer(help="Evaluation harness.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Host-side jira-mcp server and run tokens.", no_args_is_help=True)
+dashboard_app = typer.Typer(help="The web dashboard (served by `codeit up`).", no_args_is_help=True)
 
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
@@ -33,6 +34,7 @@ app.add_typer(jira_app, name="jira")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(eval_app, name="eval")
 app.add_typer(mcp_app, name="mcp")
+app.add_typer(dashboard_app, name="dashboard")
 
 ConfigPath = Annotated[
     Path, typer.Option("--config", "-c", help="Path to config.yaml.", dir_okay=False)
@@ -583,6 +585,27 @@ def agents(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
                 f"  {lease.ticket_key:<12} {lease.instance:<12} run {lease.run_id} "
                 f"heartbeat {lease.heartbeat_at:%H:%M:%S}"
             )
+
+
+@dashboard_app.command("build")
+def dashboard_build(
+    path: Annotated[
+        Path, typer.Option("--path", help="The dashboard project.", file_okay=False)
+    ] = Path("dashboard"),
+) -> None:
+    """Install the dashboard's packages and export it to dashboard/out (needs Node 24)."""
+    import shutil
+    import subprocess
+
+    npm = shutil.which("npm")
+    if npm is None:
+        typer.echo("npm not found; install Node 24 (for example with nvm).", err=True)
+        raise typer.Exit(code=1)
+    for args in (["ci", "--no-audit", "--no-fund"], ["run", "build"]):
+        code = subprocess.call([npm, *args], cwd=path)  # noqa: S603
+        if code != 0:
+            raise typer.Exit(code=code)
+    typer.echo(f"Built {path / 'out'}; `codeit up` serves it at the API address.")
 
 
 @eval_app.command("run")

@@ -1,18 +1,24 @@
-"""`codeit up` (PRD 12.1): jira-mcp, the scheduler loop and the merge watcher in one
-asyncio process. The API and dashboard arrive in M8, the rebase poller in M10 and the
-cron jobs in M11 and M12."""
+"""`codeit up` (PRD 12.1): jira-mcp, the dashboard API, the scheduler loop and the merge
+watcher in one asyncio process. The rebase poller arrives in M10, the cron jobs in M11
+and M12."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import contextlib
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+
+import uvicorn
+from sqlalchemy import Engine
 
 from codeit import db
 from codeit.config import Config, Secrets
 from codeit.github_client import GitHubClient, repo_slug
 from codeit.jira_client import JiraClient, JiraIds
+from codeit.orchestrator.api import ApiContext, create_app
 from codeit.orchestrator.budget import Budget
+from codeit.orchestrator.bus import EventBus
 from codeit.orchestrator.merge_watcher import MergeWatcher
 from codeit.orchestrator.scheduler import Orchestrator, install_signal_handlers
 from codeit.run_tokens import RunTokenStore
@@ -56,6 +62,8 @@ def preflight(cfg: Config, secrets: Secrets, sandbox: Sandbox) -> list[str]:
         warnings.append("no OPENROUTER_API_KEY: the Reviewer will not start")
     if egress is None:
         warnings.append("sandbox.egress_proxy is off: workers have unrestricted network access")
+    if secrets.codeit_api_token is None or not secrets.codeit_api_token.get_secret_value():
+        warnings.append("no CODEIT_API_TOKEN: the dashboard and API are off")
     return warnings
 
 
@@ -106,6 +114,7 @@ async def serve(
                 repo_slug(repo.url),
                 CloneManager(cfg.data_dir, repo.name, repo.url, repo.default_branch),
             )
+            bus = EventBus()
             orchestrator = Orchestrator(
                 cfg,
                 secrets,
@@ -117,6 +126,42 @@ async def serve(
                 sandbox=sandbox,
                 config_path=config_path,
                 echo=echo,
+                bus=bus,
             )
-            await orchestrator.run_forever(stop)
+            async with api_server(cfg, secrets, engine, bus, budget, orchestrator, echo):
+                await orchestrator.run_forever(stop)
     echo("orchestrator stopped")
+
+
+@contextlib.asynccontextmanager
+async def api_server(
+    cfg: Config,
+    secrets: Secrets,
+    engine: Engine,
+    bus: EventBus,
+    budget: Budget,
+    orchestrator: Orchestrator,
+    echo: Echo,
+) -> AsyncIterator[None]:
+    """The dashboard API on 127.0.0.1 for the duration of the block (PRD 14)."""
+    token = secrets.codeit_api_token.get_secret_value() if secrets.codeit_api_token else ""
+    if not token:
+        yield
+        return
+    app = create_app(ApiContext(cfg, engine, token, bus, budget, orchestrator))
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=cfg.api.host, port=cfg.api.port, log_level="warning")
+    )
+    task = asyncio.create_task(server.serve())
+    while not server.started and not task.done():  # noqa: ASYNC110 - uvicorn exposes a flag
+        await asyncio.sleep(0.05)
+    if task.done():
+        echo(f"warning: dashboard API did not start on port {cfg.api.port}")
+    else:
+        echo(f"dashboard on http://{cfg.api.host}:{cfg.api.port}")
+    try:
+        yield
+    finally:
+        server.should_exit = True
+        with contextlib.suppress(Exception):
+            await task

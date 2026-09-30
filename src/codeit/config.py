@@ -113,6 +113,13 @@ class SandboxConfig(_Strict):
     )
 
 
+class ApiConfig(_Strict):
+    """The dashboard API (PRD 14): loopback only, bearer token from `CODEIT_API_TOKEN`."""
+
+    host: Annotated[str, Field(pattern=r"^(127\.0\.0\.1|localhost|::1)$")] = "127.0.0.1"
+    port: Annotated[int, Field(ge=1, le=65535)] = 8770
+
+
 class McpConfig(_Strict):
     """Host-side jira-mcp listener (PRD 15). Containers reach it over HTTP with run tokens."""
 
@@ -179,6 +186,7 @@ class Config(_Strict):
     openrouter: OpenRouterConfig = OpenRouterConfig()
     sandbox: SandboxConfig
     mcp: McpConfig = McpConfig()
+    api: ApiConfig = ApiConfig()
     rebase: RebaseConfig = RebaseConfig()
     docs: DocsConfig = DocsConfig()
     learning: LearningConfig = LearningConfig()

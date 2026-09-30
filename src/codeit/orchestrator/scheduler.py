@@ -8,9 +8,14 @@ Every `poll_seconds`:
    running, not leased, not cooling down after an error and, for the coder, not blocked
    by an unfinished ticket (PRD 6.2 rule 5); start its run as a task
 3. the merge watcher (PRD 11.4)
-4. write each agent instance's state for `codeit agents` (PRD 12.3)
+4. refresh the dashboard's ticket cache
+5. write each agent instance's state for `codeit agents` (PRD 12.3)
+
+Changes are published on the event bus for the dashboard's live stream: agent states as
+soon as a job starts or ends, run starts and ends, changed tickets, and budget state.
 
 Slots are re-read from config.yaml every loop, so a change applies without a restart.
+Slot changes from the dashboard are kept in `data/slots.json` and win over the file.
 On shutdown, running jobs get `SHUTDOWN_GRACE_S` to finish; the rest are cancelled and
 their runs marked `interrupted`.
 """
@@ -20,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
+import json
 import signal
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -35,11 +41,13 @@ from ulid import ULID
 from codeit.config import Config, ConfigError, Role, Secrets, load_config
 from codeit.db.models import AgentInstance
 from codeit.events import record_event
-from codeit.jira_client import JiraClient, JiraIds
+from codeit.jira_client import JiraClient, JiraIds, JiraNotFound
 from codeit.jira_client.issues import get_ticket
 from codeit.jira_client.search import search_tickets
 from codeit.log import get_logger
+from codeit.orchestrator import tickets_cache
 from codeit.orchestrator.budget import CLAUDE_ROLES, Budget
+from codeit.orchestrator.bus import EventBus
 from codeit.orchestrator.leases import LeaseStore
 from codeit.orchestrator.merge_watcher import MergeWatcher
 from codeit.orchestrator.reaper import Reaper, mark_runs
@@ -52,11 +60,18 @@ JQL: Mapping[str, str] = {
     "reviewer": 'project = {p} AND status = "Agent Review" ORDER BY updated ASC',
     "coder": 'project = {p} AND status = "Ready for Dev" ORDER BY priority DESC, created ASC',
 }
+STATUS_FOR = {"coder": "Ready for Dev", "reviewer": "Agent Review"}
 CANDIDATES_PER_TICK = 20
 ERROR_COOLDOWN = timedelta(minutes=10)
 SHUTDOWN_GRACE_S = 60.0
+MAX_SLOTS = 10
+SLOT_ROLES = ("coder", "reviewer", "rebase", "docs", "learning", "planner")
 
 Echo = Callable[[str], None]
+
+
+class RunRefused(Exception):
+    """A requested run cannot start now; the message says why."""
 
 
 class AgentRunner(Protocol):
@@ -107,6 +122,7 @@ class Orchestrator:
         config_path: Path | None = None,
         echo: Echo = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        bus: EventBus | None = None,
     ) -> None:
         self.cfg = cfg
         self.secrets = secrets
@@ -120,7 +136,15 @@ class Orchestrator:
         self.config_path = config_path
         self.echo = echo
         self.clock = clock
-        self.slots: dict[str, int] = {str(k): v for k, v in cfg.slots.items()}
+        self.bus = bus or EventBus()
+        self.overrides_path = cfg.data_dir / "slots.json"
+        self.slot_overrides = self._load_overrides()
+        self.slots: dict[str, int] = {
+            **{str(k): v for k, v in cfg.slots.items()},
+            **self.slot_overrides,
+        }
+        self._published_states: list[dict[str, Any]] = []
+        self._published_budget: dict[str, Any] | None = None
         self.jobs: dict[str, Job] = {}
         self.cooldown: dict[str, datetime] = {}
         self.waiting: dict[str, str] = {}  # role -> why it cannot start runs now
@@ -158,7 +182,9 @@ class Orchestrator:
         for role in ROLES:
             await self._step(f"schedule {role}", functools.partial(self._schedule, role))
         await self._step("merge watcher", self._merge)
+        await self._step("tickets", self._refresh_tickets)
         self._write_instances()
+        self._publish_budget()
 
     async def _step(self, name: str, fn: Callable[[], Any]) -> None:
         """One part of a tick; its failure is logged and does not stop the others."""
@@ -177,19 +203,84 @@ class Orchestrator:
         for a in await self.merge_watcher.tick():
             self.echo(f"{a.key}: {a.action} ({a.detail})")
 
+    async def _refresh_tickets(self) -> None:
+        for ticket in await tickets_cache.refresh(
+            self.engine, self.jira, self.ids, self.cfg.project.jira_project_key
+        ):
+            self.bus.publish("ticket_update", ticket)
+
+    def _publish_budget(self) -> None:
+        status = jsonable(self.budget.status())
+        if status != self._published_budget:
+            self._published_budget = status
+            self.bus.publish("budget_update", status)
+
     # scheduling -----------------------------------------------------------------------------
 
-    def _reload_slots(self) -> None:
-        if self.config_path is None:
-            return
+    def _load_overrides(self) -> dict[str, int]:
         try:
-            slots = {str(k): v for k, v in load_config(self.config_path).slots.items()}
-        except ConfigError as e:
-            log.warning("orchestrator.config_reload_failed", error=str(e))
-            return
+            raw = json.loads(self.overrides_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {
+            str(k): int(v)
+            for k, v in raw.items()
+            if k in SLOT_ROLES and isinstance(v, int) and 0 <= v <= MAX_SLOTS
+        }
+
+    def _reload_slots(self) -> None:
+        base = {str(k): v for k, v in self.cfg.slots.items()}
+        if self.config_path is not None:
+            try:
+                base = {str(k): v for k, v in load_config(self.config_path).slots.items()}
+            except ConfigError as e:
+                log.warning("orchestrator.config_reload_failed", error=str(e))
+                return
+        slots = {**base, **self.slot_overrides}
         if slots != self.slots:
             self.echo(f"slots changed: {slots}")
             self.slots = slots
+
+    def set_slots(self, changes: Mapping[str, int]) -> dict[str, int]:
+        """Slot changes from the dashboard (PATCH /api/agents/slots). They apply to the next
+        claim, and are kept in `data/slots.json` across restarts."""
+        for role, count in changes.items():
+            if role not in SLOT_ROLES:
+                raise ValueError(f"unknown role {role!r}")
+            if not 0 <= count <= MAX_SLOTS:
+                raise ValueError(f"{role}: slots must be 0 to {MAX_SLOTS}")
+        self.slot_overrides.update(changes)
+        self.overrides_path.parent.mkdir(parents=True, exist_ok=True)
+        self.overrides_path.write_text(json.dumps(self.slot_overrides, indent=2), encoding="utf-8")
+        self.slots.update(changes)
+        self.echo(f"slots changed from the dashboard: {dict(changes)}")
+        self._write_instances()
+        return dict(self.slots)
+
+    async def request_run(self, role: str, key: str) -> Job:
+        """Start `role` on ticket `key` now (POST /api/runs/{role}), within the same limits
+        as the loop: the ticket in the role's status, a free slot, the budget, and no other
+        run on the ticket."""
+        if role not in self.runners:
+            raise RunRefused(f"no {role} agent in this version")
+        expected = STATUS_FOR.get(role)
+        if expected is not None:
+            try:
+                status = (await get_ticket(self.jira, key, self.ids.fields)).status
+            except JiraNotFound as e:
+                raise RunRefused(f"{key} does not exist") from e
+            if status != expected:
+                raise RunRefused(f"{key} is in {status}; the {role} takes tickets in {expected}")
+        if key in self.jobs:
+            raise RunRefused(f"{key} is already being worked on by {self.jobs[key].instance}")
+        if self.leases.holder(key) is not None:
+            raise RunRefused(f"{key} is leased by another run")
+        if len(self.busy(role)) >= self.slots.get(role, 0):
+            raise RunRefused(f"no free {role} slot")
+        decision = self.budget.can_run(role, claude_running=self._claude_running())  # type: ignore[arg-type]
+        if not decision.ok:
+            raise RunRefused(decision.reason)
+        return self._spawn(role, key)
 
     def busy(self, role: str) -> list[Job]:
         return [j for j in self.jobs.values() if j.role == role]
@@ -249,10 +340,13 @@ class Orchestrator:
         self.jobs[key] = job
         job.task = asyncio.create_task(self._run(job), name=f"{instance}:{key}")
         self.echo(f"{key}: {instance} starting run {job.run_id}")
+        self.bus.publish("run_event", {**job_dict(job), "event": "started"})
+        self._write_instances()
         return job
 
     async def _run(self, job: Job) -> None:
         runner = self.runners[job.role]
+        outcome = "finished"
         try:
             await runner(
                 self.cfg,
@@ -265,6 +359,7 @@ class Orchestrator:
                 echo=lambda line: self.echo(f"[{job.instance}] {line}"),
             )
         except Exception as e:
+            outcome = "failed"
             self.cooldown[job.key] = self.clock() + ERROR_COOLDOWN
             log.warning("orchestrator.job_failed", key=job.key, role=job.role, error=str(e))
             self.echo(f"{job.key}: {job.instance} failed: {e} (retry after cooldown)")
@@ -277,6 +372,9 @@ class Orchestrator:
                 )
         finally:
             self.jobs.pop(job.key, None)
+            self.bus.publish("run_event", {**job_dict(job), "event": outcome})
+            with contextlib.suppress(Exception):
+                self._write_instances()
 
     # shutdown and instance state ---------------------------------------------------------
 
@@ -323,8 +421,31 @@ class Orchestrator:
                 )
         return rows
 
+    def agent_states(self) -> list[dict[str, Any]]:
+        """Instances as the dashboard shows them (GET /api/agents)."""
+        jobs = {j.run_id: j for j in self.jobs.values()}
+        out = []
+        for r in self.instance_states():
+            job = jobs.get(r.current_run_id or "")
+            out.append(
+                {
+                    "name": r.name,
+                    "role": r.role,
+                    "state": r.state,
+                    "run_id": r.current_run_id,
+                    "ticket_key": job.key if job else None,
+                    "since": job.started.isoformat() if job else None,
+                    "reason": self.waiting.get(r.role) if r.state == "parked" else None,
+                }
+            )
+        return out
+
     def _write_instances(self, stopping: bool = False) -> None:
         rows = self.instance_states(stopping)
+        states = self.agent_states() if not stopping else []
+        if states != self._published_states:
+            self._published_states = states
+            self.bus.publish("agent_state", {"agents": states, "slots": dict(self.slots)})
         with Session(self.engine) as s, s.begin():
             for r in rows:
                 values = {
@@ -341,6 +462,27 @@ class Orchestrator:
                         set_={k: v for k, v in values.items() if k != "name"},
                     )
                 )
+
+
+def job_dict(job: Job) -> dict[str, Any]:
+    return {
+        "run_id": job.run_id,
+        "role": job.role,
+        "ticket_key": job.key,
+        "instance": job.instance,
+        "started": job.started.isoformat(),
+    }
+
+
+def jsonable(value: Any) -> Any:
+    """Datetimes to ISO strings, tuples to lists, for JSON payloads."""
+    if isinstance(value, dict):
+        return {str(k): jsonable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [jsonable(v) for v in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
 
 
 def install_signal_handlers(stop: asyncio.Event) -> None:
