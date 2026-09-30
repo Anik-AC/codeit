@@ -16,7 +16,7 @@ from codeit.db.models import AgentInstance, Run
 from codeit.jira_client import JiraClient
 from codeit.orchestrator.budget import Budget
 from codeit.orchestrator.leases import LeaseStore
-from codeit.orchestrator.scheduler import Orchestrator
+from codeit.orchestrator.scheduler import Orchestrator, RunRefused
 from codeit.runs import record_run
 from tests.conftest import REPO_ROOT
 from tests.unit.orchestrator.fake_jira import IDS, FakeJira
@@ -103,13 +103,27 @@ async def test_reviewer_then_coder_within_slots(
     coder = FakeRunner(fake_jira, "Agent Review")
     reviewer = FakeRunner(fake_jira, "Human Review")
     o = orchestrator(cfg, engine, jira, {"coder": coder, "reviewer": reviewer})
+    seen: list[Any] = []
 
-    await tick(o)
+    async with o.bus.subscribe() as events:
+        await tick(o)
+        while not events.empty():
+            seen.append(events.get_nowait())
     # 2 reviewer slots, 1 coder slot; reviewers are scheduled first
     assert reviewer.calls == [("CODEIT-3", "reviewer-1"), ("CODEIT-4", "reviewer-2")]
     assert coder.calls == [("CODEIT-1", "coder-1")]
     assert 'status = "Agent Review"' in fake_jira.jql[0]
-    assert states(engine) == {"reviewer-1": "busy", "reviewer-2": "busy", "coder-1": "busy"}
+    busy = [
+        {a["name"] for a in e.data["agents"] if a["state"] == "busy"}
+        for e in seen
+        if e.type == "agent_state"
+    ]
+    assert {"reviewer-1", "reviewer-2", "coder-1"} in busy  # all three at once, live
+    started = [
+        e.data["ticket_key"] for e in seen if e.type == "run_event" and e.data["event"] == "started"
+    ]
+    assert started == ["CODEIT-3", "CODEIT-4", "CODEIT-1"]
+    assert any(e.type == "ticket_update" for e in seen)
     await settle(o)
 
     await tick(o)  # CODEIT-1 is in Agent Review now
@@ -245,3 +259,46 @@ async def test_claude_runs_elsewhere_count_toward_the_limit(
     o = orchestrator(cfg, engine, jira, {"coder": coder})
     await tick(o)
     assert coder.calls == [] and "concurrency" in o.waiting["coder"]
+
+
+async def test_slots_from_the_dashboard_apply_and_persist(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    fake_jira.add("CODEIT-1", "Agent Review")
+    reviewer = FakeRunner(fake_jira, "Human Review")
+    o = orchestrator(cfg, engine, jira, {"reviewer": reviewer})
+    async with o.bus.subscribe() as events:
+        assert o.set_slots({"reviewer": 0})["reviewer"] == 0
+        assert events.get_nowait().data["slots"]["reviewer"] == 0  # live to the dashboard
+    await tick(o)
+    assert reviewer.calls == []  # applies on the next loop
+    with pytest.raises(ValueError, match="0 to 10"):
+        o.set_slots({"reviewer": 11})
+    with pytest.raises(ValueError, match="unknown role"):
+        o.set_slots({"wizard": 1})
+    again = orchestrator(cfg, engine, jira, {"reviewer": reviewer})  # a restart
+    assert again.slots["reviewer"] == 0 and again.slots["coder"] == 1
+
+
+async def test_request_run(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    fake_jira.add("CODEIT-1", "Agent Review")
+    reviewer = FakeRunner(fake_jira, None, hang=True)
+    o = orchestrator(cfg, engine, jira, {"reviewer": reviewer})
+    fake_jira.add("CODEIT-2", "Human Review")
+    with pytest.raises(RunRefused, match="CODEIT-2 is in Human Review"):
+        await o.request_run("reviewer", "CODEIT-2")
+    with pytest.raises(RunRefused, match="does not exist"):
+        await o.request_run("reviewer", "CODEIT-99")
+    job = await o.request_run("reviewer", "CODEIT-1")
+    assert job.instance == "reviewer-1"
+    with pytest.raises(RunRefused, match="already being worked on"):
+        await o.request_run("reviewer", "CODEIT-1")
+    with pytest.raises(RunRefused, match="no coder agent"):
+        await o.request_run("coder", "CODEIT-2")
+    o.set_slots({"reviewer": 1})
+    fake_jira.add("CODEIT-3", "Agent Review")
+    with pytest.raises(RunRefused, match="no free reviewer slot"):
+        await o.request_run("reviewer", "CODEIT-3")
+    await o.shutdown(grace_s=0.01)

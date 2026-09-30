@@ -80,6 +80,11 @@ mcp:
   container_host: host.docker.internal
   token_grace_minutes: 5
 
+# Dashboard and API (PRD 14). Loopback only; log in with CODEIT_API_TOKEN from .env.
+api:
+  host: 127.0.0.1
+  port: 8770
+
 rebase:
   poll_minutes: 10
   max_files: 5

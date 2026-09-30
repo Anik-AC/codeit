@@ -68,4 +68,7 @@ def test_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(serve_mod, "image_exists", lambda client, tag: True)
     monkeypatch.setattr(serve_mod, "ensure_proxy", lambda client, s: proxies.append(s))
     warnings = preflight(cfg, secrets, sandbox)
-    assert proxies and warnings == ["no OPENROUTER_API_KEY: the Reviewer will not start"]
+    assert proxies and warnings == [
+        "no OPENROUTER_API_KEY: the Reviewer will not start",
+        "no CODEIT_API_TOKEN: the dashboard and API are off",
+    ]

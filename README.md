@@ -24,8 +24,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M4.5 Sandbox app ([codeit-sandbox-app](https://github.com/Anik-AC/codeit-sandbox-app)) | Done |
 | M5 Coder | Done |
 | M6 Reviewer | Done |
-| M7 Orchestrator | In review |
-| M8 to M13 | Planned (see PRD section 23) |
+| M7 Orchestrator | Done |
+| M8 API + dashboard | In review |
+| M9 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -217,6 +218,29 @@ If you move a ticket yourself while an agent works on it, the agent's result is 
 
 **Network:** worker containers reach the internet only through the `codeit-proxy` container, and only the hosts in `sandbox.egress_allowlist` plus jira-mcp on the host. Build the proxy image with `codeit sandbox build`, which builds both images.
 
+## Dashboard
+
+`codeit up` also serves a web dashboard and its API on http://127.0.0.1:8770 (PRD 14, ADR-0014). Build it once, and again after pulling dashboard changes:
+
+```bash
+uv run codeit dashboard build   # needs Node 24; exports dashboard/out
+uv run codeit up                # then open http://localhost:8770
+```
+
+Log in with `CODEIT_API_TOKEN` from `.env`; the browser remembers it for 30 days. Everything updates live:
+
+| Page | Shows |
+|---|---|
+| Agents | Each instance: busy, idle, parked (with the reason) or disabled; the ticket and for how long. Change slots with −/+. Start the Coder or Reviewer on a ticket now. |
+| Pipeline | Tickets by Jira status, with points, review loops, PR links, and which agent holds them |
+| Runs | Every run, filtered by agent or ticket, with status, time and cost |
+| Run | The result (PR, review checks and verdict), orchestrator events, and the live Claude transcript |
+| Budget | Claude window, parking and runs today; OpenRouter spend per role and free requests against their caps |
+
+Slot changes from the dashboard apply to the next claim and are kept in `data/slots.json`, which wins over `config.yaml`. Scripts can call the API with `Authorization: Bearer $CODEIT_API_TOKEN`.
+
+For dashboard development: `cd dashboard && npm run dev` (port 3000, proxies `/api` to 8770).
+
 ## Models and keys
 
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
@@ -284,7 +308,7 @@ Jira and deletes it.
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
 | `prompts/`, `templates/` | Versioned prompts per role; Jira description templates |
 | `src/codeit/github_client/` | GitHub REST: PRs, feedback, check runs, PR reviews |
-| `src/codeit/orchestrator/` | `codeit up`: scheduler, leases, reaper, budget guard, merge watcher |
+| `src/codeit/orchestrator/` | `codeit up`: scheduler, leases, reaper, budget guard, merge watcher, API (`api.py`) and event bus |
 | `src/codeit/target.py` | The target repo's `codeit.yaml` |
 | `src/codeit/run_tokens.py` | Per-run jira-mcp tokens (mint, verify, revoke) |
 | `src/codeit/jira_client/` | Async Jira client: retries, ADF, search, issues, transitions, comments, doctor, discover |
@@ -292,6 +316,6 @@ Jira and deletes it.
 | `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
 | `sandbox/` | Worker image (`Dockerfile`) and egress proxy image (`proxy/`) |
 | `evals/` | Eval suites and rubrics |
-| `dashboard/` | Next.js dashboard (M8) |
+| `dashboard/` | Next.js dashboard, exported to `dashboard/out` and served by the API |
 | `docs/` | PRD, ADRs, work log |
 | `data/` | Runtime state (gitignored) |

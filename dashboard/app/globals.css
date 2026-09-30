@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+/* Colours as tokens so light and dark stay in step. Neutrals lean slightly blue. */
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --ink: #17202b;
+  --muted: #5d6877;
+  --line: #dfe3e9;
+  --accent: #2b5fd9;
+  --accent-soft: #e7eefc;
+  --busy: #2b5fd9;
+  --busy-soft: #e7eefc;
+  --ok: #1d7a4c;
+  --ok-soft: #e2f3ea;
+  --warn: #a15c00;
+  --warn-soft: #fbefd9;
+  --bad: #b3261e;
+  --bad-soft: #fbe5e3;
+  --code: #eef1f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #10151c;
+    --panel: #161d26;
+    --ink: #e3e8ee;
+    --muted: #97a3b2;
+    --line: #273240;
+    --accent: #7ca3f4;
+    --accent-soft: #1b2a45;
+    --busy: #7ca3f4;
+    --busy-soft: #1b2a45;
+    --ok: #67c493;
+    --ok-soft: #14301f;
+    --warn: #e2a852;
+    --warn-soft: #33260d;
+    --bad: #f08a82;
+    --bad-soft: #3a1714;
+    --code: #1c2530;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-busy: var(--busy);
+  --color-busy-soft: var(--busy-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-code: var(--code);
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
