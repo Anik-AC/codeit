@@ -1,0 +1,9 @@
+id: T006
+title: Edit a task through the API
+points: 2
+kind: api
+tags:
+- api
+- validation
+- sqlite
+hidden_total: 11

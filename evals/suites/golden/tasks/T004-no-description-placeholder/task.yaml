@@ -1,0 +1,8 @@
+id: T004
+title: Placeholder for tasks without a description
+points: 1
+kind: ui
+tags:
+- ui
+- react
+hidden_total: 4

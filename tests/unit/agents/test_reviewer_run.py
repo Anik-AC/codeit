@@ -58,7 +58,12 @@ TICKET_MD = {
         {"type": "paragraph", "content": [{"type": "text", "text": "Given 3 tasks, count is 3"}]},
     ],
 }
-PASS = {"verdict": "pass", "ac_coverage": [], "findings": [], "summary_md": "Good."}
+PASS = {
+    "verdict": "pass",
+    "ac_coverage": [{"criterion": "Given 3 tasks, count is 3", "status": "met"}],
+    "findings": [],
+    "summary_md": "Good.",
+}
 CODEIT_YAML = """commands:
   install: "npm ci"
   lint: "npm run lint"

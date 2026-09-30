@@ -1,0 +1,6 @@
+- id: M1
+  kind: logic_error
+  defect: Search is case-sensitive.
+- id: M2
+  kind: test_asserts_nothing
+  defect: The new App test asserts nothing; the code is right.

@@ -1,0 +1,6 @@
+- id: M1
+  kind: ui_not_wired
+  defect: 'The checkboxes are not connected: clicking one does nothing.'
+- id: M2
+  kind: test_asserts_nothing
+  defect: The new API tests assert nothing; the code is right.

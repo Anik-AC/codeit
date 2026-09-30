@@ -1,0 +1,198 @@
+diff --git a/src/client/AddTaskForm.tsx b/src/client/AddTaskForm.tsx
+new file mode 100644
+index 0000000..b399148
+--- /dev/null
++++ b/src/client/AddTaskForm.tsx
+@@ -0,0 +1,41 @@
++import { type FormEvent, useState } from "react";
++import type { Task } from "../shared/types.ts";
++import { createTask } from "./api.ts";
++
++export function AddTaskForm({ onAdded }: { onAdded: (task: Task) => void }) {
++  const [title, setTitle] = useState("");
++  const [description, setDescription] = useState("");
++  const [error, setError] = useState<string | null>(null);
++  const [saving, setSaving] = useState(false);
++
++  async function submit(e: FormEvent) {
++    e.preventDefault();
++    setSaving(true);
++    setError(null);
++    try {
++      const task = await createTask({ title, description });
++      onAdded(task);
++      setTitle("");
++      setDescription("");
++    } catch (err) {
++      setError((err as Error).message);
++    } finally {
++      setSaving(false);
++    }
++  }
++
++  return (
++    <form aria-label="Add a task" onSubmit={submit}>
++      <label>
++        Title <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} />
++      </label>
++      <label>
++        Description <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} />
++      </label>
++      <button type="submit" disabled={saving || !title.trim()}>
++        Add task
++      </button>
++      {error && <p role="alert">{error}</p>}
++    </form>
++  );
++}
+diff --git a/src/client/App.tsx b/src/client/App.tsx
+index 2947c89..eec375c 100644
+--- a/src/client/App.tsx
++++ b/src/client/App.tsx
+@@ -1,5 +1,6 @@
+ import { useEffect, useState } from "react";
+ import type { Task } from "../shared/types.ts";
++import { AddTaskForm } from "./AddTaskForm.tsx";
+ import { fetchTasks } from "./api.ts";
+ import { TaskCount } from "./TaskCount.tsx";
+ import { TaskList } from "./TaskList.tsx";
+@@ -27,6 +28,7 @@ export function App() {
+       {state.status === "ready" && (
+         <>
+           <TaskCount count={state.tasks.length} />
++          <AddTaskForm onAdded={() => undefined} />
+           <TaskList tasks={state.tasks} />
+         </>
+       )}
+diff --git a/src/client/api.ts b/src/client/api.ts
+index 04a3775..3348db9 100644
+--- a/src/client/api.ts
++++ b/src/client/api.ts
+@@ -1,8 +1,21 @@
+ /** Typed calls to the API. */
+-import type { Task } from "../shared/types.ts";
++import type { ApiError, Task } from "../shared/types.ts";
+ 
+ export async function fetchTasks(): Promise<Task[]> {
+   const res = await fetch("/api/tasks");
+   if (!res.ok) throw new Error(`Could not load tasks (${res.status})`);
+   return (await res.json()) as Task[];
+ }
++
++export async function createTask(input: { title: string; description: string }): Promise<Task> {
++  const res = await fetch("/api/tasks", {
++    method: "POST",
++    headers: { "Content-Type": "application/json" },
++    body: JSON.stringify(input),
++  });
++  if (!res.ok) {
++    const body = (await res.json().catch(() => null)) as ApiError | null;
++    throw new Error(body?.error ?? `Could not add the task (${res.status})`);
++  }
++  return (await res.json()) as Task;
++}
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..751959e 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,7 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { createTask, listTasks } from "./tasks.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +28,21 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.post("/api/tasks", (req, res) => {
++    const body = (req.body ?? {}) as { title?: unknown; description?: unknown };
++    const title = typeof body.title === "string" ? body.title.trim() : "";
++    if (!title) {
++      res.status(400).json({ error: "title is required" } satisfies ApiError);
++      return;
++    }
++    if (title.length > 200) {
++      res.status(400).json({ error: "title must be at most 200 characters" } satisfies ApiError);
++      return;
++    }
++    const description = typeof body.description === "string" && body.description.trim() ? body.description.trim() : null;
++    res.status(201).json(createTask(db, title, description));
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..70b2597 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -20,3 +20,10 @@ export function listTasks(db: Db): Task[] {
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++export function createTask(db: Db, title: string, description: string | null): Task {
++  const row = db
++    .prepare("INSERT INTO tasks (title, description) VALUES (?, ?) RETURNING id, title, description, created_at")
++    .get(title, description) as unknown as TaskRow;
++  return toTask(row);
++}
+diff --git a/tests/unit/client/AddTaskForm.test.tsx b/tests/unit/client/AddTaskForm.test.tsx
+new file mode 100644
+index 0000000..9a81cc0
+--- /dev/null
++++ b/tests/unit/client/AddTaskForm.test.tsx
+@@ -0,0 +1,29 @@
++/** @vitest-environment jsdom */
++import { fireEvent, render, screen } from "@testing-library/react";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { AddTaskForm } from "../../../src/client/AddTaskForm.tsx";
++
++afterEach(() => {
++  vi.unstubAllGlobals();
++});
++
++describe("AddTaskForm", () => {
++  it("posts the task and reports it", async () => {
++    const created = { id: 9, title: "Walk", description: null, createdAt: "2026-01-01T00:00:00Z" };
++    vi.stubGlobal("fetch", vi.fn(async () => Response.json(created, { status: 201 })));
++    const onAdded = vi.fn();
++    render(<AddTaskForm onAdded={onAdded} />);
++    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Walk" } });
++    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
++    await vi.waitFor(() => expect(onAdded).toHaveBeenCalledWith(created));
++    expect(screen.getByLabelText("Title")).toHaveValue("");
++  });
++
++  it("shows the API error", async () => {
++    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "title is required" }, { status: 400 })));
++    render(<AddTaskForm onAdded={vi.fn()} />);
++    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "x" } });
++    fireEvent.click(screen.getByRole("button", { name: "Add task" }));
++    expect(await screen.findByRole("alert")).toHaveTextContent("title is required");
++  });
++});
+diff --git a/tests/unit/server/create.test.ts b/tests/unit/server/create.test.ts
+new file mode 100644
+index 0000000..902363d
+--- /dev/null
++++ b/tests/unit/server/create.test.ts
+@@ -0,0 +1,14 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb } from "../../../src/server/db.ts";
++
++describe("POST /api/tasks", () => {
++  it("creates a task and validates the title", async () => {
++    const app = createApp(openDb(":memory:"));
++    const res = await request(app).post("/api/tasks").send({ title: "Walk" });
++    expect(res.status).toBe(201);
++    expect(res.body).toMatchObject({ title: "Walk", description: null });
++    expect((await request(app).post("/api/tasks").send({ title: "" })).status).toBe(400);
++  });
++});

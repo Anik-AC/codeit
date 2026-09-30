@@ -1,0 +1,6 @@
+- id: M1
+  kind: wrong_status
+  defect: Deleting a task that does not exist returns 204 instead of 404.
+- id: M2
+  kind: test_asserts_nothing
+  defect: The new tests assert nothing (expect(true)); the code is right.

@@ -1,0 +1,10 @@
+id: T007
+title: Tasks can be marked done
+points: 2
+kind: full-stack
+tags:
+- api
+- sqlite
+- migration
+- types
+hidden_total: 6

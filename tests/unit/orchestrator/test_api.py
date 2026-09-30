@@ -151,6 +151,7 @@ def test_budget_and_evals(client: TestClient) -> None:
     budget = client.get("/api/budget", headers=BEARER).json()
     assert budget["claude"]["window"] == ["23:00-08:00"] and budget["openrouter"]["key"]
     assert client.get("/api/evals", headers=BEARER).json() == []
+    assert client.get("/api/evals/NOPE", headers=BEARER).status_code == 404
 
 
 def test_dashboard_is_served(cfg: Config, engine: Engine, tmp_path: Path) -> None:
@@ -286,3 +287,19 @@ async def test_trigger_starts_a_task_on_the_loop(
             call, "PATCH", f"{base}/api/agents/slots", {"reviewer": 1}
         )
         assert slots["slots"]["reviewer"] == 1
+
+
+def test_eval_runs(client: TestClient, engine: Engine) -> None:
+    from codeit.evals.runner import _add_result, _finish_run, _start_run
+
+    _start_run(engine, "E1", "golden", "default", "abc123def456", "claude-sonnet-5")
+    _add_result(
+        engine, "E1", task_id="T001", repeat_idx=0, passed=True, hidden_pass_ratio=1.0,
+        notes='{"coder": "committed"}',
+    )  # fmt: skip
+    _finish_run(engine, "E1", {"pass@1": 1.0})
+    runs = client.get("/api/evals", headers=BEARER).json()
+    assert runs[0]["id"] == "E1" and runs[0]["summary"] == {"pass@1": 1.0}
+    detail = client.get("/api/evals/E1", headers=BEARER).json()
+    assert detail["results"][0]["notes"] == {"coder": "committed"}
+    assert detail["steering_sha"] == "abc123def456"

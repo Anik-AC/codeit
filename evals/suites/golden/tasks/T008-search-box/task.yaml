@@ -1,0 +1,9 @@
+id: T008
+title: Search box for the task list
+points: 2
+kind: ui
+tags:
+- ui
+- react
+- state
+hidden_total: 5

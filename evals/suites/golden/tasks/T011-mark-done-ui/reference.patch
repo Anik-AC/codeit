@@ -1,0 +1,266 @@
+diff --git a/src/client/App.tsx b/src/client/App.tsx
+index 2947c89..94f46fc 100644
+--- a/src/client/App.tsx
++++ b/src/client/App.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useState } from "react";
+ import type { Task } from "../shared/types.ts";
+-import { fetchTasks } from "./api.ts";
++import { fetchTasks, setTaskDone } from "./api.ts";
+ import { TaskCount } from "./TaskCount.tsx";
+ import { TaskList } from "./TaskList.tsx";
+ 
+@@ -8,6 +8,19 @@ type State = { status: "loading" } | { status: "error"; message: string } | { st
+ 
+ export function App() {
+   const [state, setState] = useState<State>({ status: "loading" });
++  const [updateError, setUpdateError] = useState(false);
++
++  async function changeDone(task: Task, done: boolean) {
++    setUpdateError(false);
++    try {
++      const updated = await setTaskDone(task.id, done);
++      setState((s) =>
++        s.status === "ready" ? { status: "ready", tasks: s.tasks.map((t) => (t.id === updated.id ? updated : t)) } : s,
++      );
++    } catch {
++      setUpdateError(true);
++    }
++  }
+ 
+   useEffect(() => {
+     let cancelled = false;
+@@ -26,8 +39,9 @@ export function App() {
+       {state.status === "error" && <p role="alert">{state.message}</p>}
+       {state.status === "ready" && (
+         <>
+-          <TaskCount count={state.tasks.length} />
+-          <TaskList tasks={state.tasks} />
++          <TaskCount count={state.tasks.length} done={state.tasks.filter((t) => t.done).length} />
++          {updateError && <p role="alert">Could not update the task</p>}
++          <TaskList tasks={state.tasks} onDoneChange={changeDone} />
+         </>
+       )}
+     </main>
+diff --git a/src/client/TaskCount.tsx b/src/client/TaskCount.tsx
+index e63cd5a..464c0c0 100644
+--- a/src/client/TaskCount.tsx
++++ b/src/client/TaskCount.tsx
+@@ -1,6 +1,7 @@
+-export function TaskCount({ count }: { count: number }) {
++export function TaskCount({ count, done = 0 }: { count: number; done?: number }) {
+   if (count === 0) {
+     return null;
+   }
+-  return <p>{count === 1 ? "You have 1 task" : `You have ${count} tasks`}</p>;
++  const total = count === 1 ? "You have 1 task" : `You have ${count} tasks`;
++  return <p>{done > 0 ? `${total}, ${done} done` : total}</p>;
+ }
+diff --git a/src/client/TaskList.tsx b/src/client/TaskList.tsx
+index 03e702c..d2fecc9 100644
+--- a/src/client/TaskList.tsx
++++ b/src/client/TaskList.tsx
+@@ -1,6 +1,6 @@
+ import type { Task } from "../shared/types.ts";
+ 
+-export function TaskList({ tasks }: { tasks: Task[] }) {
++export function TaskList({ tasks, onDoneChange }: { tasks: Task[]; onDoneChange?: (task: Task, done: boolean) => void }) {
+   if (tasks.length === 0) {
+     return <p>No tasks yet.</p>;
+   }
+@@ -8,7 +8,13 @@ export function TaskList({ tasks }: { tasks: Task[] }) {
+     <ul aria-label="Tasks">
+       {tasks.map((task) => (
+         <li key={task.id}>
+-          <strong>{task.title}</strong>
++          <input
++            type="checkbox"
++            aria-label={`Mark ${task.title} as done`}
++            checked={task.done}
++            onChange={(e) => onDoneChange?.(task, e.target.checked)}
++          />
++          <strong className={task.done ? "done" : undefined}>{task.title}</strong>
+           {task.description && <p>{task.description}</p>}
+         </li>
+       ))}
+diff --git a/src/client/api.ts b/src/client/api.ts
+index 04a3775..0535cf6 100644
+--- a/src/client/api.ts
++++ b/src/client/api.ts
+@@ -6,3 +6,13 @@ export async function fetchTasks(): Promise<Task[]> {
+   if (!res.ok) throw new Error(`Could not load tasks (${res.status})`);
+   return (await res.json()) as Task[];
+ }
++
++export async function setTaskDone(id: number, done: boolean): Promise<Task> {
++  const res = await fetch(`/api/tasks/${id}/done`, {
++    method: "PUT",
++    headers: { "Content-Type": "application/json" },
++    body: JSON.stringify({ done }),
++  });
++  if (!res.ok) throw new Error(`Could not update the task (${res.status})`);
++  return (await res.json()) as Task;
++}
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..bb091ff 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,7 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { listTasks, setDone } from "./tasks.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +28,24 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.put("/api/tasks/:id/done", (req, res) => {
++    if (!/^[1-9]\d*$/.test(req.params.id)) {
++      res.status(400).json({ error: "Invalid task id" } satisfies ApiError);
++      return;
++    }
++    const done = (req.body as { done?: unknown } | undefined)?.done;
++    if (typeof done !== "boolean") {
++      res.status(400).json({ error: "done must be true or false" } satisfies ApiError);
++      return;
++    }
++    const task = setDone(db, Number(req.params.id), done);
++    if (!task) {
++      res.status(404).json({ error: "Task not found" } satisfies ApiError);
++      return;
++    }
++    res.json(task);
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+diff --git a/src/server/db.ts b/src/server/db.ts
+index 0060c33..e19698a 100644
+--- a/src/server/db.ts
++++ b/src/server/db.ts
+@@ -10,6 +10,7 @@ const MIGRATIONS: string[] = [
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`,
++  "ALTER TABLE tasks ADD COLUMN done INTEGER NOT NULL DEFAULT 0",
+ ];
+ 
+ export function openDb(path: string): Db {
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..feca294 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -1,4 +1,4 @@
+-/** Task persistence. The only feature today is listing; see README for what is next. */
++/** Task persistence. */
+ import type { Task } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+ 
+@@ -7,16 +7,33 @@ interface TaskRow {
+   title: string;
+   description: string | null;
+   created_at: string;
++  done: number;
+ }
+ 
++const COLUMNS = "id, title, description, created_at, done";
++
+ function toTask(row: TaskRow): Task {
+-  return { id: row.id, title: row.title, description: row.description, createdAt: row.created_at };
++  return {
++    id: row.id,
++    title: row.title,
++    description: row.description,
++    createdAt: row.created_at,
++    done: row.done === 1,
++  };
+ }
+ 
+ /** Newest first. */
+ export function listTasks(db: Db): Task[] {
+   const rows = db
+-    .prepare("SELECT id, title, description, created_at FROM tasks ORDER BY created_at DESC, id DESC")
++    .prepare(`SELECT ${COLUMNS} FROM tasks ORDER BY created_at DESC, id DESC`)
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++/** Sets a task's done flag; returns the task, or null if there is no such task. */
++export function setDone(db: Db, id: number, done: boolean): Task | null {
++  const row = db
++    .prepare(`UPDATE tasks SET done = ? WHERE id = ? RETURNING ${COLUMNS}`)
++    .get(done ? 1 : 0, id) as TaskRow | undefined;
++  return row ? toTask(row) : null;
++}
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 2a497e2..3db09ad 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -5,6 +5,7 @@ export interface Task {
+   title: string;
+   description: string | null;
+   createdAt: string; // ISO 8601, UTC
++  done: boolean;
+ }
+ 
+ export interface ApiError {
+diff --git a/tests/unit/client/TaskCount.test.tsx b/tests/unit/client/TaskCount.test.tsx
+index 6e19692..f18a889 100644
+--- a/tests/unit/client/TaskCount.test.tsx
++++ b/tests/unit/client/TaskCount.test.tsx
+@@ -18,4 +18,9 @@ describe("TaskCount", () => {
+     const { container } = render(<TaskCount count={0} />);
+     expect(container).toBeEmptyDOMElement();
+   });
++
++  it("says how many are done", () => {
++    render(<TaskCount count={3} done={1} />);
++    expect(screen.getByText("You have 3 tasks, 1 done")).toBeInTheDocument();
++  });
+ });
+diff --git a/tests/unit/client/TaskList.test.tsx b/tests/unit/client/TaskList.test.tsx
+index 744e716..02b19f6 100644
+--- a/tests/unit/client/TaskList.test.tsx
++++ b/tests/unit/client/TaskList.test.tsx
+@@ -13,8 +13,8 @@ describe("TaskList", () => {
+     render(
+       <TaskList
+         tasks={[
+-          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z" },
+-          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z" },
++          { id: 1, title: "First", description: "Details", createdAt: "2026-01-01T00:00:00Z", done: false },
++          { id: 2, title: "Second", description: null, createdAt: "2026-01-01T00:01:00Z", done: false },
+         ]}
+       />,
+     );
+diff --git a/tests/unit/server/done.test.ts b/tests/unit/server/done.test.ts
+new file mode 100644
+index 0000000..78fb0cd
+--- /dev/null
++++ b/tests/unit/server/done.test.ts
+@@ -0,0 +1,20 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("PUT /api/tasks/:id/done", () => {
++  it("sets done", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const res = await request(createApp(db)).put("/api/tasks/1/done").send({ done: true });
++    expect(res.status).toBe(200);
++    expect(res.body).toMatchObject({ id: 1, done: true });
++  });
++
++  it("validates the body", async () => {
++    const res = await request(createApp(openDb(":memory:"))).put("/api/tasks/1/done").send({ done: "no" });
++    expect(res.status).toBe(400);
++    expect(res.body).toEqual({ error: "done must be true or false" });
++  });
++});

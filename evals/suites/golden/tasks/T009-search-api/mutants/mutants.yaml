@@ -1,0 +1,6 @@
+- id: M1
+  kind: missing_check
+  defect: '% and _ are not escaped, so they act as wildcards.'
+- id: M2
+  kind: sql_injection
+  defect: The search text is pasted into the SQL string (SQL injection).

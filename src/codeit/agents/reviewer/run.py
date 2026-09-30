@@ -14,8 +14,10 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Final
 
+from sqlalchemy import Engine
 from ulid import ULID
 
 from codeit import db
@@ -41,6 +43,7 @@ from codeit.agents.reviewer.verdict import (
     Verdict,
     apply_override,
     as_dict,
+    has_criteria,
     model_verdict,
     render_jira,
     render_review,
@@ -198,45 +201,18 @@ async def run_reviewer(
             )
             path = await clones.prepare_review(key, pr.head_sha)
             base = await clones.git.run("merge-base", "HEAD", f"origin/{pr.base_ref}", cwd=path)
-            changed = (
-                await clones.git.run(
-                    "diff", "--name-only", "--diff-filter=AM", f"{base}..HEAD", cwd=path
-                )
-            ).split()
-            excludes = [f":(exclude){f}" for f in LOCKFILES]
-            diff = await clones.git.run("diff", f"{base}..HEAD", "--", ".", *excludes, cwd=path)
-            target = load_target_config(path)
-            phase1 = Phase1(test_files=changed_test_files(changed, target))
+            changed, diff = await workspace_diff(clones.git, path, base)
             echo(f"{key}: PR #{pr.number} at {pr.head_sha[:8]}, {len(changed)} files changed")
-
-            sandbox = sandbox or Sandbox()
-            env = {**role_env(ROLE, secrets), "CI": "1"}
-            spec = ContainerSpec.for_role(
+            phase1 = await run_phase1(
                 cfg,
+                secrets,
+                sandbox or Sandbox(),
                 run_id=run_id,
-                role=ROLE,
-                workspace=path,
-                run_dir=cfg.data_dir / "runs" / run_id,
-                env=env,
+                path=path,
+                head=pr.head_sha,
+                base=base,
+                changed=changed,
             )
-            per_check = cfg.sandbox.timeouts_minutes.get(ROLE, 30) * 60
-            container = sandbox.start(spec)
-            try:
-                runner = container_runner(sandbox, str(container.id))
-                phase1.checks += await run_commands(target, runner, per_check)
-                if phase1.checks[0].status == "pass":
-                    phase1.checks.append(
-                        await new_tests_fail_on_base(
-                            target,
-                            runner,
-                            test_files=phase1.test_files,
-                            head=pr.head_sha,
-                            base=base,
-                            timeout_s=per_check,
-                        )
-                    )
-            finally:
-                sandbox.stop(container, cfg.data_dir / "logs" / "containers" / f"{run_id}.log")
 
             async def fetch_ci() -> list[tuple[str, str, str | None]]:
                 return [
@@ -259,31 +235,17 @@ async def run_reviewer(
                     [],
                 )
             ]
-            verdict: Verdict | None = None
-            call: ModelCall | None = None
-            try:
-                verdict, call = await model_verdict(
-                    backends or chat_route(cfg, secrets, ROLE),
-                    key=key,
-                    ticket_md=ticket_markdown(ticket),
-                    diff=diff,
-                    phase1=phase1,
-                    suggestions=suggestions,
-                )
-            except BackendUnavailable as e:
-                log.warning("reviewer.model_unavailable", reason=str(e))
-                echo(f"{key}: model review unavailable ({e})")
-            if call is not None:
-                record_spend(
-                    engine,
-                    backend=call.backend,
-                    role=ROLE,
-                    usd=call.cost_usd,
-                    requests=call.calls,
-                    note=f"review {run_id}",
-                )
-            has_criteria = "acceptance criteria" in ticket.description_md.lower()
-            verdict = apply_override(verdict, phase1, has_criteria=has_criteria)
+            verdict, call = await judge(
+                backends or chat_route(cfg, secrets, ROLE),
+                engine,
+                run_id=run_id,
+                key=key,
+                ticket_md=ticket_markdown(ticket),
+                diff=diff,
+                phase1=phase1,
+                suggestions=suggestions,
+                echo=echo,
+            )
             routing = route(verdict, ticket.review_loop, cfg.orchestrator.max_review_loops)
 
             review_url = await post_review(
@@ -325,6 +287,99 @@ async def run_reviewer(
     finally:
         leases.release(key, run_id)
         clear_run()
+
+
+async def workspace_diff(git: Git, path: Path, base: str) -> tuple[list[str], str]:
+    """Files added or modified since `base`, and the diff without lockfiles."""
+    changed = (
+        await git.run("diff", "--name-only", "--diff-filter=AM", f"{base}..HEAD", cwd=path)
+    ).split()
+    excludes = [f":(exclude){f}" for f in LOCKFILES]
+    diff = await git.run("diff", f"{base}..HEAD", "--", ".", *excludes, cwd=path)
+    return changed, diff
+
+
+async def run_phase1(
+    cfg: Config,
+    secrets: Secrets,
+    sandbox: Sandbox,
+    *,
+    run_id: str,
+    path: Path,
+    head: str,
+    base: str,
+    changed: Sequence[str],
+) -> Phase1:
+    """The deterministic checks in a worker container (PRD 11.3 phase 1), without CI."""
+    target = load_target_config(path)
+    phase1 = Phase1(test_files=changed_test_files(changed, target))
+    env = {**role_env(ROLE, secrets), "CI": "1"}
+    spec = ContainerSpec.for_role(
+        cfg,
+        run_id=run_id,
+        role=ROLE,
+        workspace=path,
+        run_dir=cfg.data_dir / "runs" / run_id,
+        env=env,
+    )
+    per_check = cfg.sandbox.timeouts_minutes.get(ROLE, 30) * 60
+    container = sandbox.start(spec)
+    try:
+        runner = container_runner(sandbox, str(container.id))
+        phase1.checks += await run_commands(target, runner, per_check)
+        if phase1.checks[0].status == "pass":
+            phase1.checks.append(
+                await new_tests_fail_on_base(
+                    target,
+                    runner,
+                    test_files=phase1.test_files,
+                    head=head,
+                    base=base,
+                    timeout_s=per_check,
+                )
+            )
+    finally:
+        sandbox.stop(container, cfg.data_dir / "logs" / "containers" / f"{run_id}.log")
+    return phase1
+
+
+async def judge(
+    backends: Sequence[ChatBackend],
+    engine: Engine,
+    *,
+    run_id: str,
+    key: str,
+    ticket_md: str,
+    diff: str,
+    phase1: Phase1,
+    suggestions: Sequence[str] = (),
+    echo: Echo = print,
+) -> tuple[Verdict | None, ModelCall | None]:
+    """Phase 2: the model's verdict, its spend recorded, then the phase 1 override."""
+    verdict: Verdict | None = None
+    call: ModelCall | None = None
+    try:
+        verdict, call = await model_verdict(
+            backends,
+            key=key,
+            ticket_md=ticket_md,
+            diff=diff,
+            phase1=phase1,
+            suggestions=list(suggestions),
+        )
+    except BackendUnavailable as e:
+        log.warning("reviewer.model_unavailable", reason=str(e))
+        echo(f"{key}: model review unavailable ({e})")
+    if call is not None:
+        record_spend(
+            engine,
+            backend=call.backend,
+            role=ROLE,
+            usd=call.cost_usd,
+            requests=call.calls,
+            note=f"review {run_id}",
+        )
+    return apply_override(verdict, phase1, has_criteria=has_criteria(ticket_md)), call
 
 
 async def _apply_routing(

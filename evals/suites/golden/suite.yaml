@@ -1,0 +1,11 @@
+# The golden suite (PRD 17.1): tasks on codeit-sandbox-app, all starting from one commit.
+name: golden
+repo: https://github.com/Anik-AC/codeit-sandbox-app.git
+base_commit: d576021b029f1e49b5a5d4a6ba69f6fee24c1d5e
+# How hidden tests run. {files} is the hidden test files, {out} a JSON report path.
+commands:
+  install: npm ci
+  unit: npx vitest run --reporter=json --outputFile={out} {files}
+  e2e: npx playwright test --reporter=json {files} > {out}
+hidden_globs:
+  e2e: ["e2e/**"]

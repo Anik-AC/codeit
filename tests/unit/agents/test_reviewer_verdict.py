@@ -189,3 +189,62 @@ def test_render_review_and_jira() -> None:
 def test_render_incomplete() -> None:
     body = render_review(None, ALL_PASS, run_id="R", call=None)
     assert "incomplete" in body and "A human should review this PR." in body
+
+
+@pytest.mark.parametrize(
+    ("given", "findings", "coverage", "expected"),
+    [
+        ("fail_critical", ["major"], ["met", "partial"], "pass_with_notes"),  # seen live
+        ("fail_critical", ["critical"], ["met"], "fail_critical"),
+        ("pass", [], ["met", "unmet"], "fail_critical"),
+        ("pass", ["major"], ["met"], "pass_with_notes"),
+        ("pass", ["minor", "nit"], ["met"], "pass"),
+        ("pass_with_notes", [], ["met"], "pass_with_notes"),
+    ],
+)
+def test_verdict_follows_the_findings(
+    given: str, findings: list[str], coverage: list[str], expected: str
+) -> None:
+    from codeit.agents.reviewer.verdict import consistent
+
+    verdict = Verdict.model_validate(
+        {
+            "verdict": given,
+            "ac_coverage": [{"criterion": f"c{i}", "status": s} for i, s in enumerate(coverage)],
+            "findings": [{"severity": s, "issue": "x"} for s in findings],
+            "summary_md": "s",
+        }
+    )
+    assert consistent(verdict).verdict == expected
+
+
+async def test_model_verdict_is_made_consistent() -> None:
+    answer = {**GOOD, "verdict": "fail_critical"}  # only a nit, yet "fail_critical"
+    verdict, _ = await model_verdict(
+        [FakeBackend("rev", [answer])], key="K", ticket_md="t", diff="d", phase1=ALL_PASS
+    )
+    assert verdict.verdict == "pass_with_notes"  # a wrong fail goes to a human, with notes
+
+
+async def test_coverage_is_required_when_the_ticket_has_criteria() -> None:
+    """Seen live: the model explained a SQL injection in the summary but left the lists
+    empty. Such an answer is sent back once."""
+    empty = {
+        "verdict": "fail_critical",
+        "ac_coverage": [],
+        "findings": [],
+        "summary_md": "Injection.",
+    }
+    backend = FakeBackend("rev", [empty, GOOD])
+    verdict, call = await model_verdict(
+        [backend], key="K", ticket_md="## Acceptance criteria\n- x", diff="d", phase1=ALL_PASS
+    )
+    assert call.calls == 2 and verdict.ac_coverage
+    assert "ac_coverage" in backend.requests[1].messages[-1].content
+
+
+def test_a_fail_without_evidence_is_kept() -> None:
+    from codeit.agents.reviewer.verdict import consistent
+
+    bare = Verdict(verdict="fail_critical", summary_md="SQL injection; the Coder must fix it.")
+    assert consistent(bare).verdict == "fail_critical"

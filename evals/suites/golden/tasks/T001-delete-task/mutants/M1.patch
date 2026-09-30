@@ -1,0 +1,82 @@
+diff --git a/src/server/app.ts b/src/server/app.ts
+index 2b26958..2bba7de 100644
+--- a/src/server/app.ts
++++ b/src/server/app.ts
+@@ -4,7 +4,7 @@ import { resolve } from "node:path";
+ import express, { type ErrorRequestHandler } from "express";
+ import type { ApiError } from "../shared/types.ts";
+ import type { Db } from "./db.ts";
+-import { listTasks } from "./tasks.ts";
++import { deleteTask, listTasks } from "./tasks.ts";
+ 
+ export interface AppOptions {
+   /** Serve `dist/` (the built client) with a fallback to index.html. */
+@@ -28,6 +28,17 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+     res.json(listTasks(db));
+   });
+ 
++  app.delete("/api/tasks/:id", (req, res) => {
++    const id = parseTaskId(req.params.id);
++    if (id === null) {
++      const body: ApiError = { error: "Invalid task id" };
++      res.status(400).json(body);
++      return;
++    }
++    deleteTask(db, id);
++    res.status(204).end();
++  });
++
+   app.use("/api", (_req, res) => {
+     const body: ApiError = { error: "Not found" };
+     res.status(404).json(body);
+@@ -53,3 +64,8 @@ export function createApp(db: Db, options: AppOptions = {}): express.Express {
+   app.use(onError);
+   return app;
+ }
++
++/** A task id from the URL: a positive whole number, or null. */
++function parseTaskId(raw: string): number | null {
++  return /^[1-9]\d*$/.test(raw) ? Number(raw) : null;
++}
+diff --git a/src/server/tasks.ts b/src/server/tasks.ts
+index 8999551..a2fab49 100644
+--- a/src/server/tasks.ts
++++ b/src/server/tasks.ts
+@@ -20,3 +20,9 @@ export function listTasks(db: Db): Task[] {
+     .all() as unknown as TaskRow[];
+   return rows.map(toTask);
+ }
++
++/** Deletes a task. Returns false if there was no such task. */
++export function deleteTask(db: Db, id: number): boolean {
++  const result = db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
++  return Number(result.changes) > 0;
++}
+diff --git a/tests/unit/server/delete-task.test.ts b/tests/unit/server/delete-task.test.ts
+new file mode 100644
+index 0000000..44c6acc
+--- /dev/null
++++ b/tests/unit/server/delete-task.test.ts
+@@ -0,0 +1,22 @@
++import request from "supertest";
++import { describe, expect, it } from "vitest";
++import { createApp } from "../../../src/server/app.ts";
++import { openDb, seed } from "../../../src/server/db.ts";
++
++describe("DELETE /api/tasks/:id", () => {
++  it("deletes the task", async () => {
++    const db = openDb(":memory:");
++    seed(db);
++    const app = createApp(db);
++    const res = await request(app).delete("/api/tasks/1");
++    expect(res.status).toBe(204);
++    const list = await request(app).get("/api/tasks");
++    expect(list.body.map((t: { id: number }) => t.id)).not.toContain(1);
++  });
++
++  it("returns 400 for an invalid id", async () => {
++    const res = await request(createApp(openDb(":memory:"))).delete("/api/tasks/abc");
++    expect(res.status).toBe(400);
++    expect(res.body).toEqual({ error: "Invalid task id" });
++  });
++});

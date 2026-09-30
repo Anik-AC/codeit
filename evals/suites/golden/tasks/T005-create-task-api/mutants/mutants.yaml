@@ -1,0 +1,6 @@
+- id: M1
+  kind: wrong_status
+  defect: A created task returns 200 instead of 201.
+- id: M2
+  kind: missing_null_check
+  defect: 'description: null crashes with a 500 (null.trim()).'

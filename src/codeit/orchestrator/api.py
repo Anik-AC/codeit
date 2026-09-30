@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from codeit.config import Config
-from codeit.db.models import AgentInstance, Event, Run
+from codeit.db.models import AgentInstance, EvalResult, EvalRun, Event, Run
 from codeit.orchestrator import tickets_cache
 from codeit.orchestrator.budget import Budget
 from codeit.orchestrator.bus import EventBus
@@ -102,6 +102,38 @@ def authorized(request: Request) -> None:
 
 
 Auth = Annotated[None, Depends(authorized)]
+
+
+def eval_summary(r: EvalRun) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "suite": r.suite,
+        "config": r.config_name,
+        "steering_sha": r.steering_sha,
+        "model": r.model,
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+        "summary": r.summary_json,
+    }
+
+
+def eval_result(r: EvalResult) -> dict[str, Any]:
+    try:
+        notes = json.loads(r.notes) if r.notes else None
+    except ValueError:
+        notes = {"text": r.notes}
+    return {
+        "task_id": r.task_id,
+        "repeat": r.repeat_idx,
+        "passed": r.passed,
+        "hidden_pass_ratio": r.hidden_pass_ratio,
+        "turns": r.turns,
+        "cost_usd": r.cost_usd,
+        "duration_s": r.duration_s,
+        "diff_lines": r.diff_lines,
+        "reviewer_verdict": r.reviewer_verdict,
+        "notes": notes,
+    }
 
 
 class LoginBody(BaseModel):
@@ -304,12 +336,25 @@ def create_app(ctx: ApiContext) -> FastAPI:
         return jsonable(ctx.budget.status())  # type: ignore[no-any-return]
 
     @app.get("/api/evals")
-    def evals(_: Auth) -> list[dict[str, Any]]:
-        return []  # the eval harness arrives in M9
+    def evals(
+        _: Auth, limit: Annotated[int, Query(ge=1, le=MAX_RUNS)] = 50
+    ) -> list[dict[str, Any]]:
+        with Session(ctx.engine) as s:
+            runs = s.scalars(select(EvalRun).order_by(EvalRun.started_at.desc()).limit(limit))
+            return [eval_summary(r) for r in runs]
 
     @app.get("/api/evals/{eval_id}")
     def eval_detail(_: Auth, eval_id: str) -> dict[str, Any]:
-        raise HTTPException(404, "the eval harness arrives in M9")
+        with Session(ctx.engine) as s:
+            run = s.get(EvalRun, eval_id)
+            if run is None:
+                raise HTTPException(404, f"no eval run {eval_id}")
+            results = s.scalars(
+                select(EvalResult)
+                .where(EvalResult.eval_run_id == eval_id)
+                .order_by(EvalResult.task_id, EvalResult.repeat_idx)
+            )
+            return {**eval_summary(run), "results": [eval_result(r) for r in results]}
 
     # live stream -------------------------------------------------------------------------
 

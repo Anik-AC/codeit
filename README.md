@@ -25,8 +25,9 @@ _Metrics appear here once the Docs agent runs (M11)._
 | M5 Coder | Done |
 | M6 Reviewer | Done |
 | M7 Orchestrator | Done |
-| M8 API + dashboard | In review |
-| M9 to M13 | Planned (see PRD section 23) |
+| M8 API + dashboard | Done |
+| M9 Eval harness | In review |
+| M10 to M13 | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -241,6 +242,26 @@ Slot changes from the dashboard apply to the next claim and are kept in `data/sl
 
 For dashboard development: `cd dashboard && npm run dev` (port 3000, proxies `/api` to 8770).
 
+## Evals
+
+Measure the Coder and the Reviewer on fixed tasks (PRD 17, ADR-0015; details in [evals/README.md](evals/README.md)):
+
+```bash
+uv run codeit eval verify                  # check the suite itself
+uv run codeit eval run --repeats 3         # the Coder on all 12 golden tasks, 3 times each
+uv run codeit eval review                  # the Reviewer on 12 good and 24 seeded-bug patches
+uv run codeit eval report --compare default,other
+```
+
+- **Golden suite:** 12 tasks on codeit-sandbox-app, all from one pinned commit: 4 of 1 point, 5 of 2, 3 of 3; API, UI and full-stack. Each has a ticket, hidden tests the Coder never sees, and a reference solution.
+- **`eval run`:**
+  - Runs the real Coder on a fresh clone, then scores it with the hidden tests.
+  - Reports pass@1 (share of runs where every hidden test passes), pass^k (share of tasks that pass on every repeat), partial credit, and the median cost, turns, time and diff size.
+  - `--review` also runs the Reviewer on each result.
+- **Claude limits:** Coder evals use Claude like the orchestrator does. They wait for the run window (`--any-time` to override), take the one Claude slot, and stop cleanly if Claude hits its usage limit. A full run with 3 repeats is 36 Claude runs; start it in the evening.
+- **`eval review`:** reports the Reviewer's catch rate on planted bugs and its false-fail rate on correct patches.
+- **Dashboard:** the Evals page charts pass@1 over time, per steering version (the Coder prompts and the target's steering kit).
+
 ## Models and keys
 
 - **OpenRouter:** one key for everything: `OPENROUTER_API_KEY` in `.env`. The older per-role names still work.
@@ -303,6 +324,7 @@ Jira and deletes it.
 | Path | Contents |
 |---|---|
 | `src/codeit/` | CLI, config, logging, db; orchestrator, agents, backends and clients land here per milestone |
+| `src/codeit/evals/` | Eval harness: suite loading, workspaces, hidden-test scoring, runner, metrics, reports |
 | `src/codeit/agents/` | Agents: `planner.py` and `planner_run.py` (`codeit plan`); `coder.py` and `coder_run.py` (`codeit run coder`); `reviewer/` (`codeit run reviewer`) |
 | `src/codeit/backends/` | Model adapters: Claude Code (chat on the host, agentic in containers), OpenRouter, routing, parking |
 | `src/codeit/sandbox/` | Worker containers, per-ticket clones, run glue, garbage collection |
@@ -315,7 +337,7 @@ Jira and deletes it.
 | `config/` | `config.yaml`, plus `jira_ids.yaml` written by `codeit jira discover` |
 | `mcp_servers/jira/` | jira-mcp server: role-filtered tools, run-token auth |
 | `sandbox/` | Worker image (`Dockerfile`) and egress proxy image (`proxy/`) |
-| `evals/` | Eval suites and rubrics |
+| `evals/` | Golden suite (tasks, hidden tests, reference patches, seeded bugs) and eval configs |
 | `dashboard/` | Next.js dashboard, exported to `dashboard/out` and served by the API |
 | `docs/` | PRD, ADRs, work log |
 | `data/` | Runtime state (gitignored) |

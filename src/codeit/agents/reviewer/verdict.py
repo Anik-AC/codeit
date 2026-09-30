@@ -63,6 +63,15 @@ class Verdict(_Strict):
     summary_md: Annotated[str, Field(min_length=1)]
 
 
+class ReviewAnswer(Verdict):
+    """What the model must return for a ticket with acceptance criteria: the coverage and
+    findings lists are required, and every criterion must be listed. A model that explains
+    the problems only in `summary_md` gets the answer back for a retry."""
+
+    ac_coverage: Annotated[list[ACCoverage], Field(min_length=1)]
+    findings: list[Finding]
+
+
 class FileSummary(_Strict):
     path: str
     summary: str
@@ -168,12 +177,41 @@ async def model_verdict(
         diff=diff,
         file_summaries=summaries,
     )
-    verdict, call = await _structured(
-        backends, [system, ChatMessage("user", prompt)], Verdict, "verdict"
+    shape: type[Verdict] = ReviewAnswer if has_criteria(ticket_md) else Verdict
+    answer, call = await _structured(
+        backends, [system, ChatMessage("user", prompt)], shape, "verdict"
     )
-    return verdict, ModelCall(
+    verdict = Verdict.model_validate(answer.model_dump())
+    return consistent(verdict), ModelCall(
         call.backend, call.model, calls + call.calls, cost + (call.cost_usd or 0)
     )
+
+
+def has_criteria(ticket_md: str) -> bool:
+    return "acceptance criteria" in ticket_md.lower()
+
+
+def consistent(verdict: Verdict) -> Verdict:
+    """Make the verdict follow the model's own findings (ADR-0015). `fail_critical` needs an
+    unmet criterion or a critical finding; `pass` allows no major finding and no partial
+    criterion. The seeded-bug eval showed models failing patches over major notes alone.
+
+    A `fail_critical` is only lowered when the model gave its evidence (a coverage list);
+    with no evidence there is nothing to overrule it with."""
+    critical = any(f.severity == "critical" for f in verdict.findings)
+    unmet = any(c.status == "unmet" for c in verdict.ac_coverage)
+    notes = any(f.severity == "major" for f in verdict.findings) or any(
+        c.status == "partial" for c in verdict.ac_coverage
+    )
+    if critical or unmet:
+        wanted = "fail_critical"
+    elif (verdict.verdict == "fail_critical" and verdict.ac_coverage) or (
+        verdict.verdict == "pass" and notes
+    ):
+        wanted = "pass_with_notes"
+    else:
+        wanted = verdict.verdict
+    return verdict if wanted == verdict.verdict else verdict.model_copy(update={"verdict": wanted})
 
 
 def apply_override(

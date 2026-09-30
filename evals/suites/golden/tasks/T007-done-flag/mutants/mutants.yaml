@@ -1,0 +1,6 @@
+- id: M1
+  kind: migration
+  defect: The column is added by editing the first migration, so existing databases never get it.
+- id: M2
+  kind: logic_error
+  defect: Toggle always sets done to true; a second toggle does not undo it.

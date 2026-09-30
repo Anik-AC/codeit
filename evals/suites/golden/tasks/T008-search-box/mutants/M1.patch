@@ -1,0 +1,73 @@
+diff --git a/src/client/App.tsx b/src/client/App.tsx
+index 2947c89..1272fe0 100644
+--- a/src/client/App.tsx
++++ b/src/client/App.tsx
+@@ -4,10 +4,20 @@ import { fetchTasks } from "./api.ts";
+ import { TaskCount } from "./TaskCount.tsx";
+ import { TaskList } from "./TaskList.tsx";
+ 
++function FilteredList({ tasks, search }: { tasks: Task[]; search: string }) {
++  const query = search.trim();
++  const matches = query ? tasks.filter((t) => t.title.includes(query)) : tasks;
++  if (query && matches.length === 0) {
++    return <p>No tasks match your search.</p>;
++  }
++  return <TaskList tasks={matches} />;
++}
++
+ type State = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; tasks: Task[] };
+ 
+ export function App() {
+   const [state, setState] = useState<State>({ status: "loading" });
++  const [search, setSearch] = useState("");
+ 
+   useEffect(() => {
+     let cancelled = false;
+@@ -27,7 +37,10 @@ export function App() {
+       {state.status === "ready" && (
+         <>
+           <TaskCount count={state.tasks.length} />
+-          <TaskList tasks={state.tasks} />
++          <label>
++            Search tasks <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} />
++          </label>
++          <FilteredList tasks={state.tasks} search={search} />
+         </>
+       )}
+     </main>
+diff --git a/tests/unit/client/App.test.tsx b/tests/unit/client/App.test.tsx
+index bedbe31..3e7b1d2 100644
+--- a/tests/unit/client/App.test.tsx
++++ b/tests/unit/client/App.test.tsx
+@@ -1,5 +1,5 @@
+ /** @vitest-environment jsdom */
+-import { render, screen } from "@testing-library/react";
++import { fireEvent, render, screen } from "@testing-library/react";
+ import { afterEach, describe, expect, it, vi } from "vitest";
+ import { App } from "../../../src/client/App.tsx";
+ 
+@@ -36,6 +36,24 @@ describe("App", () => {
+     expect(screen.getByRole("heading", { name: "Tasks" }).nextElementSibling).toBe(count);
+   });
+ 
++  it("filters tasks by the search box", async () => {
++    vi.stubGlobal(
++      "fetch",
++      vi.fn(async () =>
++        Response.json([
++          { id: 1, title: "Alpha", description: null, createdAt: "2026-01-01T00:00:00Z" },
++          { id: 2, title: "Beta", description: null, createdAt: "2026-01-01T00:01:00Z" },
++        ]),
++      ),
++    );
++    render(<App />);
++    fireEvent.change(await screen.findByLabelText("Search tasks"), { target: { value: "Bet" } });
++    expect(screen.getAllByRole("listitem")).toHaveLength(1);
++    expect(screen.getByText("Beta")).toBeInTheDocument();
++    fireEvent.change(screen.getByLabelText("Search tasks"), { target: { value: "gamma" } });
++    expect(screen.getByText("No tasks match your search.")).toBeInTheDocument();
++  });
++
+   it("shows an error when the API fails", async () => {
+     vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
+     render(<App />);

@@ -1,0 +1,12 @@
+id: T011
+title: Mark tasks done from the page
+points: 3
+kind: full-stack
+tags:
+- ui
+- react
+- api
+- sqlite
+- migration
+- e2e
+hidden_total: 13

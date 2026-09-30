@@ -45,6 +45,15 @@ def jira_comment(body: str, hour: int) -> Comment:
         ("no result here", None),
         ('RESULT: {"status": "exploded"}', None),
         ("RESULT: {not json}", None),
+        (  # seen live: key=value instead of JSON
+            'Committed.\n\nRESULT status="committed" pr_url=null',
+            CoderResult(status="committed", pr_url=None),
+        ),
+        (
+            "RESULT: status=blocked notes='needs a decision'",
+            CoderResult(status="blocked", notes="needs a decision"),
+        ),
+        ('RESULT status="exploded"', None),
     ],
 )
 def test_parse_result(text: str, expected: CoderResult | None) -> None:
