@@ -58,6 +58,26 @@ function ReviewerGlyph({ busy }: { busy: boolean }) {
   );
 }
 
+function RebaseGlyph({ busy }: { busy: boolean }) {
+  // Two branches: main straight up, the PR's branch swinging over onto it.
+  return (
+    <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
+      <path d="M9 4 V24" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" opacity="0.55" />
+      <path
+        d="M19 22 V16 C19 11 9 12 9 7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        style={busy ? { strokeDasharray: 26, animation: "draw 1.8s ease-in-out infinite alternate", ["--len" as string]: 26 } : undefined}
+      />
+      <circle cx="9" cy="24" r="2.4" fill="var(--panel)" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="9" cy="5" r="2.4" fill="var(--panel)" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="19" cy="22" r="2.4" fill="currentColor" style={busy ? { animation: "breathe 1.8s ease-in-out infinite", transformBox: "fill-box", transformOrigin: "center" } : undefined} />
+    </svg>
+  );
+}
+
 function PlannerGlyph({ busy }: { busy: boolean }) {
   return (
     <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
@@ -91,7 +111,8 @@ function Moon() {
 export function AgentAvatar({ role, state, size = 56 }: { role: string; state: AgentState; size?: number }) {
   const color = roleColor(role);
   const busy = state === "busy";
-  const Glyph = role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : PlannerGlyph;
+  const Glyph =
+    role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : role === "rebase" ? RebaseGlyph : PlannerGlyph;
   return (
     <div
       className={cn("relative grid shrink-0 place-items-center", state === "disabled" && "opacity-35 grayscale")}

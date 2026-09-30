@@ -386,6 +386,7 @@ async def _review(
         diff=diff,
         phase1=phase1,
         echo=ctx.echo,
+        spend_role="eval",  # evals never use up the production Reviewer's daily cap
     )
     notes["checks"] = {c.name: c.status for c in phase1.checks}
     notes["review_cost_usd"] = call.cost_usd if call else None

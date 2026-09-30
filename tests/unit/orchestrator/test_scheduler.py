@@ -201,7 +201,7 @@ async def test_slots_reload_without_restart(
     path.write_text(yaml.safe_dump(raw))
     await tick(o)
     assert reviewer.calls == [] and o.slots["reviewer"] == 0
-    assert states(engine) == {"reviewer-1": "disabled", "coder-1": "idle"}
+    assert states(engine) == {"reviewer-1": "disabled", "coder-1": "idle", "rebase-1": "idle"}
 
     raw["slots"]["reviewer"] = 1
     path.write_text(yaml.safe_dump(raw))
@@ -330,3 +330,40 @@ async def test_fast_lane_skips_the_reviewer(
     await tick(again)
     assert reviewer.calls == [("CODEIT-3", "reviewer-1")]
     await settle(again)
+
+
+async def test_rebase_poll(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    rebaser = FakeRunner(fake_jira, None)
+    found = ["CODEIT-1", "CODEIT-2"]
+    polls: list[int] = []
+
+    async def find() -> list[str]:
+        polls.append(1)
+        return found
+
+    o = orchestrator(cfg, engine, jira, {"rebase": rebaser})
+    o.find_rebase = find
+    LeaseStore(engine).acquire("CODEIT-2", "reviewer", "reviewer-1", "R", timedelta(minutes=5))
+    await tick(o)
+    await settle(o)
+    assert rebaser.calls == [("CODEIT-1", "rebase-1")]  # CODEIT-2 is leased; 1 rebase slot
+    await tick(o)
+    assert len(polls) == 1  # polled every rebase.poll_minutes, not every tick
+    o._last_rebase_poll = None
+    await tick(o)
+    await settle(o)
+    assert len(polls) == 2 and len(rebaser.calls) == 2
+
+
+def test_waiting_reasons_compare_without_numbers() -> None:
+    from codeit.orchestrator.scheduler import _kind
+
+    assert _kind("reviewer spent $0.51 of $0.50 today") == _kind(
+        "reviewer spent $0.52 of $0.50 today"
+    )
+    assert _kind("outside the Claude run window (23:00-08:00)") != _kind(
+        "Claude is parked until 04:00"
+    )
+    assert _kind(None) is None

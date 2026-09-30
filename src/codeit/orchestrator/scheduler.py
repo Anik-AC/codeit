@@ -26,8 +26,9 @@ import asyncio
 import contextlib
 import functools
 import json
+import re
 import signal
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,7 +48,7 @@ from codeit.jira_client.search import search_tickets
 from codeit.log import get_logger
 from codeit.orchestrator import settings as runtime_settings
 from codeit.orchestrator import tickets_cache
-from codeit.orchestrator.budget import CLAUDE_ROLES, Budget
+from codeit.orchestrator.budget import CLAUDE_ROLES, Budget, Decision
 from codeit.orchestrator.bus import EventBus
 from codeit.orchestrator.fast_lane import fast_track
 from codeit.orchestrator.leases import LeaseStore
@@ -58,6 +59,8 @@ from codeit.sandbox.containers import Sandbox
 log = get_logger(__name__)
 
 ROLES: tuple[Role, ...] = ("reviewer", "coder")
+INSTANCE_ROLES: tuple[Role, ...] = ("reviewer", "coder", "rebase")
+FindRebase = Callable[[], Awaitable[list[str]]]
 JQL: Mapping[str, str] = {
     "reviewer": 'project = {p} AND status = "Agent Review" ORDER BY updated ASC',
     "coder": 'project = {p} AND status = "Ready for Dev" ORDER BY priority DESC, created ASC',
@@ -93,9 +96,10 @@ class AgentRunner(Protocol):
 
 def default_runners() -> dict[str, AgentRunner]:
     from codeit.agents.coder_run import run_coder
+    from codeit.agents.rebase import run_rebase
     from codeit.agents.reviewer.run import run_reviewer
 
-    return {"coder": run_coder, "reviewer": run_reviewer}
+    return {"coder": run_coder, "reviewer": run_reviewer, "rebase": run_rebase}
 
 
 @dataclass
@@ -125,6 +129,7 @@ class Orchestrator:
         echo: Echo = print,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         bus: EventBus | None = None,
+        find_rebase: FindRebase | None = None,
     ) -> None:
         self.cfg = cfg
         self.secrets = secrets
@@ -139,6 +144,8 @@ class Orchestrator:
         self.echo = echo
         self.clock = clock
         self.bus = bus or EventBus()
+        self.find_rebase = find_rebase
+        self._last_rebase_poll: datetime | None = None
         self.overrides_path = cfg.data_dir / "slots.json"
         self.slot_overrides = self._load_overrides()
         self.slots: dict[str, int] = {
@@ -187,6 +194,7 @@ class Orchestrator:
             await self._step("fast lane", self._fast_track)
         for role in ROLES:
             await self._step(f"schedule {role}", functools.partial(self._schedule, role))
+        await self._step("rebase poll", self._rebase_poll)
         await self._step("merge watcher", self._merge)
         await self._step("tickets", self._refresh_tickets)
         self._write_instances()
@@ -201,9 +209,41 @@ class Orchestrator:
             self.echo(f"{name} failed: {e}")
 
     async def _reap(self) -> None:
+        max_age = (max(self.cfg.sandbox.timeouts_minutes.values(), default=60) + 30) * 60
+        with contextlib.suppress(Exception):  # Docker may be down; runs are reaped below
+            for name in self.sandbox.remove_stale(max_age):
+                self.echo(f"removed stale container {name}")
         live = {j.run_id for j in self.jobs.values()}
         for r in await self.reaper.reap(live):
             self.echo(f"{r.key}: dead {r.role} run {r.run_id} -> {r.action}")
+
+    async def _rebase_poll(self) -> None:
+        """Every `rebase.poll_minutes`, start the Rebase agent on PRs that no longer apply
+        cleanly to main (PRD 11.5). A clean rebase needs no Claude; conflicts check the
+        budget inside the run, and wait for a later poll if Claude may not run."""
+        if self.find_rebase is None or "rebase" not in self.runners:
+            return
+        now = self.clock()
+        every = timedelta(minutes=self.cfg.rebase.poll_minutes)
+        if self._last_rebase_poll is not None and now - self._last_rebase_poll < every:
+            return
+        self._last_rebase_poll = now
+        free = self.slots.get("rebase", 0) - len(self.busy("rebase"))
+        if free <= 0:
+            return
+        for key in await self.find_rebase():
+            if free <= 0:
+                break
+            if key in self.jobs or self.cooldown.get(key, now) > now:
+                continue
+            if self.leases.holder(key) is not None:
+                continue
+            self._spawn("rebase", key)
+            free -= 1
+
+    def claude_check(self, own_key: str) -> Callable[[], Decision]:
+        """For a rebase job: may Claude run now, not counting the job's own lease?"""
+        return lambda: self.budget.can_run("rebase", claude_running=self._claude_running(own_key))
 
     def _reload_settings(self) -> None:
         on = runtime_settings.load(self.cfg.data_dir).fast_lane
@@ -315,7 +355,7 @@ class Orchestrator:
     def busy(self, role: str) -> list[Job]:
         return [j for j in self.jobs.values() if j.role == role]
 
-    def _claude_running(self) -> int:
+    def _claude_running(self, exclude: str | None = None) -> int:
         """Claude runs going anywhere: this process's jobs, plus live leases held by other
         processes (a manual `codeit run`, or a crashed run whose container still works)."""
         keys = {j.key for j in self.jobs.values() if j.role in CLAUDE_ROLES}
@@ -325,6 +365,7 @@ class Orchestrator:
             expires = expires if expires.tzinfo else expires.replace(tzinfo=UTC)
             if lease.role in CLAUDE_ROLES and expires > now:
                 keys.add(lease.ticket_key)
+        keys.discard(exclude or "")
         return len(keys)
 
     async def _schedule(self, role: Role) -> None:
@@ -336,7 +377,7 @@ class Orchestrator:
             return
         decision = self.budget.can_run(role, claude_running=self._claude_running())
         if not decision.ok:
-            if self.waiting.get(role) != decision.reason:
+            if _kind(self.waiting.get(role)) != _kind(decision.reason):
                 self.echo(f"{role}: waiting ({decision.reason})")
             self.waiting[role] = decision.reason
             return
@@ -378,7 +419,8 @@ class Orchestrator:
         return job
 
     async def _run(self, job: Job) -> None:
-        runner = self.runners[job.role]
+        runner: Any = self.runners[job.role]
+        extra = {"claude_check": self.claude_check(job.key)} if job.role == "rebase" else {}
         outcome = "finished"
         try:
             await runner(
@@ -390,6 +432,7 @@ class Orchestrator:
                 run_id=job.run_id,
                 sandbox=self.sandbox,
                 echo=lambda line: self.echo(f"[{job.instance}] {line}"),
+                **extra,
             )
         except Exception as e:
             outcome = "failed"
@@ -428,7 +471,7 @@ class Orchestrator:
     def instance_states(self, stopping: bool = False) -> list[AgentInstance]:
         now = self.clock()
         rows = []
-        for role in ROLES:
+        for role in INSTANCE_ROLES:
             jobs = {j.instance: j for j in self.busy(role)}
             highest = max((int(n.rsplit("-", 1)[1]) for n in jobs), default=0)
             count = max(self.slots.get(role, 0), highest)
@@ -499,6 +542,12 @@ class Orchestrator:
                         set_={k: v for k, v in values.items() if k != "name"},
                     )
                 )
+
+
+def _kind(reason: str | None) -> str | None:
+    """A waiting reason without its numbers, so "$0.51 of $0.50" and "$0.52 of $0.50"
+    are one reason and are echoed once."""
+    return re.sub(r"[\d.$:]+", "#", reason) if reason else None
 
 
 def job_dict(job: Job) -> dict[str, Any]:

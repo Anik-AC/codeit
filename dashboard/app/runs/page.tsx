@@ -42,6 +42,7 @@ function Runs() {
             <option value="">All agents</option>
             <option value="coder">Coder</option>
             <option value="reviewer">Reviewer</option>
+            <option value="rebase">Rebaser</option>
             <option value="planner">Planner</option>
           </Select>
           <Input

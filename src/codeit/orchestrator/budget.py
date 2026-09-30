@@ -156,6 +156,7 @@ class Budget:
         now = self._clock()
         claude = self._backends.get(CLAUDE_BACKEND, now.astimezone(UTC))
         roles = sorted(set(self.cfg.openrouter.daily_usd_cap))
+        eval_spend = self.spent_today("eval")
         return {
             "claude": {
                 "state": claude.state,
@@ -169,6 +170,7 @@ class Budget:
                 "spend": {
                     r: (self.spent_today(r), self.cfg.openrouter.daily_usd_cap[r]) for r in roles
                 },
+                "eval_spend": eval_spend,
                 "free_requests": (
                     self.free_requests_today(),
                     self.cfg.openrouter.free_requests_daily_cap,

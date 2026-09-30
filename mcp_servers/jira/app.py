@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import socket
 import sys
@@ -36,7 +37,13 @@ def build_http_server(jira: JiraContext, cfg: Config, store: RunTokenStore) -> u
     server = JiraMCP(jira, verifier=RunTokenVerifier(store))
     app = server.http_app(cfg.mcp.allowed_hosts)
     return uvicorn.Server(
-        uvicorn.Config(app, host=cfg.mcp.host, port=cfg.mcp.port, log_level="warning")
+        uvicorn.Config(
+            app,
+            host=cfg.mcp.host,
+            port=cfg.mcp.port,
+            log_level="warning",
+            timeout_graceful_shutdown=3,
+        )
     )
 
 
@@ -56,6 +63,8 @@ async def running_http_server(
         yield False
         return
     server = build_http_server(jira, cfg, store)
+    # The host process (codeit up) owns SIGINT/SIGTERM and stops this server itself.
+    server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign,assignment]
     task = asyncio.create_task(server.serve())
     while not server.started and not task.done():  # noqa: ASYNC110 - uvicorn exposes a flag
         await asyncio.sleep(0.05)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import uvicorn
 from sqlalchemy import Engine
 
 from codeit import db
+from codeit.agents.rebase import rebase_candidates
 from codeit.config import Config, Secrets
 from codeit.github_client import GitHubClient, repo_slug
 from codeit.jira_client import JiraClient, JiraIds
@@ -127,6 +129,9 @@ async def serve(
                 config_path=config_path,
                 echo=echo,
                 bus=bus,
+                find_rebase=functools.partial(
+                    rebase_candidates, gh, repo_slug(repo.url), jira, ids
+                ),
             )
             async with api_server(cfg, secrets, engine, bus, budget, orchestrator, echo):
                 await orchestrator.run_forever(stop)
@@ -148,10 +153,20 @@ async def api_server(
     if not token:
         yield
         return
-    app = create_app(ApiContext(cfg, engine, token, bus, budget, orchestrator))
+    ctx = ApiContext(cfg, engine, token, bus, budget, orchestrator)
+    app = create_app(ctx)
     server = uvicorn.Server(
-        uvicorn.Config(app, host=cfg.api.host, port=cfg.api.port, log_level="warning")
+        uvicorn.Config(
+            app,
+            host=cfg.api.host,
+            port=cfg.api.port,
+            log_level="warning",
+            # Browsers keep the live stream open; do not wait for them to leave on shutdown.
+            timeout_graceful_shutdown=3,
+        )
     )
+    # uvicorn would take over SIGINT/SIGTERM; the orchestrator owns them and stops us.
+    server.capture_signals = contextlib.nullcontext  # type: ignore[method-assign,assignment]
     task = asyncio.create_task(server.serve())
     while not server.started and not task.done():  # noqa: ASYNC110 - uvicorn exposes a flag
         await asyncio.sleep(0.05)
@@ -162,6 +177,7 @@ async def api_server(
     try:
         yield
     finally:
+        ctx.closing.set()
         server.should_exit = True
         with contextlib.suppress(Exception):
             await task

@@ -22,7 +22,7 @@ import hmac
 import json
 import secrets
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -61,6 +61,8 @@ class ApiContext:
     static_dir: Path | None = DASHBOARD_DIR
     tail_poll_s: float = TAIL_POLL_S
     keepalive_s: float = KEEPALIVE_S
+    # Set on shutdown: live streams end themselves instead of being cut off.
+    closing: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def session_value(token: str) -> str:
@@ -319,7 +321,7 @@ def create_app(ctx: ApiContext) -> FastAPI:
             position, sent = 0, 0
             partial = ""
             idle = 0.0
-            while not await request.is_disconnected():
+            while not ctx.closing.is_set() and not await request.is_disconnected():
                 if path.exists():
                     with path.open(encoding="utf-8", errors="replace") as f:
                         f.seek(position)
@@ -390,12 +392,17 @@ def create_app(ctx: ApiContext) -> FastAPI:
             async with ctx.bus.subscribe() as queue:
                 yield sse("agent_state", await agents(None))
                 yield sse("budget_update", jsonable(ctx.budget.status()))
-                while not await request.is_disconnected():
+                idle = 0.0
+                while not ctx.closing.is_set() and not await request.is_disconnected():
                     try:
-                        event = await asyncio.wait_for(queue.get(), ctx.keepalive_s)
+                        event = await asyncio.wait_for(queue.get(), 1.0)
                     except TimeoutError:
-                        yield ": keepalive\n\n"
+                        idle += 1.0
+                        if idle >= ctx.keepalive_s:
+                            idle = 0.0
+                            yield ": keepalive\n\n"
                         continue
+                    idle = 0.0
                     yield sse(event.type, event.data)
 
         return _sse_response(events())
