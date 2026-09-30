@@ -3,22 +3,38 @@ import type { ReactNode } from "react";
 
 export type Tone = "neutral" | "busy" | "ok" | "warn" | "bad";
 
-const tones: Record<Tone, string> = {
-  neutral: "bg-code text-muted",
-  busy: "bg-busy-soft text-busy",
-  ok: "bg-ok-soft text-ok",
-  warn: "bg-warn-soft text-warn",
-  bad: "bg-bad-soft text-bad",
+const colors: Record<Tone, string> = {
+  neutral: "var(--muted)",
+  busy: "var(--coder)",
+  ok: "var(--ok)",
+  warn: "var(--warn)",
+  bad: "var(--bad)",
 };
 
-export function Badge({ tone = "neutral", children, className }: { tone?: Tone; children: ReactNode; className?: string }) {
+/** A status pill tinted from one colour, so it reads in both themes. */
+export function Badge({
+  tone = "neutral",
+  color,
+  children,
+  className,
+}: {
+  tone?: Tone;
+  color?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const c = color ?? colors[tone];
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 font-mono text-xs",
-        tones[tone],
+        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-[11px] font-medium",
         className,
       )}
+      style={{
+        color: c,
+        borderColor: `color-mix(in srgb, ${c} 35%, transparent)`,
+        background: `color-mix(in srgb, ${c} 12%, transparent)`,
+      }}
     >
       {children}
     </span>

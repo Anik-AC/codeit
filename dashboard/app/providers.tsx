@@ -1,6 +1,7 @@
 "use client";
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MotionConfig } from "motion/react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
@@ -22,7 +23,9 @@ export function Providers({ children }: { children: ReactNode }) {
   const onLogin = usePathname().startsWith("/login");
   return (
     <QueryClientProvider client={client}>
-      {onLogin ? children : <LiveProvider>{children}</LiveProvider>}
+      <MotionConfig reducedMotion="user">
+        {onLogin ? children : <LiveProvider>{children}</LiveProvider>}
+      </MotionConfig>
     </QueryClientProvider>
   );
 }

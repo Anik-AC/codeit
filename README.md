@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/logo.svg" width="72" alt="CodeIt logo"></p>
+
 # CodeIt
 
 A local multi-agent software delivery system for personal projects:
@@ -229,6 +231,10 @@ uv run codeit up                # then open http://localhost:8770
 ```
 
 Log in with `CODEIT_API_TOKEN` from `.env`; the browser remembers it for 30 days. Everything updates live:
+
+![The Agents page: two agents at work, the pipeline, slots and recent runs](docs/images/dashboard-agents.png)
+<sub>Screenshot with sample data. Also: [pipeline board](docs/images/dashboard-pipeline.png), [budget and run window](docs/images/dashboard-budget.png), [light theme](docs/images/dashboard-agents-light.png).</sub>
+
 
 | Page | Shows |
 |---|---|
