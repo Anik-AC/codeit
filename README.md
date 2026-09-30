@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/logo.svg" width="72" alt="CodeIt logo"></p>
+
 # CodeIt
 
 A local multi-agent software delivery system for personal projects:
@@ -230,6 +232,10 @@ uv run codeit up                # then open http://localhost:8770
 
 Log in with `CODEIT_API_TOKEN` from `.env`; the browser remembers it for 30 days. Everything updates live:
 
+![The Agents page: two agents at work, the pipeline, slots and recent runs](docs/images/dashboard-agents.png)
+<sub>Screenshot with sample data. Also: [pipeline board](docs/images/dashboard-pipeline.png), [budget and run window](docs/images/dashboard-budget.png), [light theme](docs/images/dashboard-agents-light.png).</sub>
+
+
 | Page | Shows |
 |---|---|
 | Agents | Each instance: busy, idle, parked (with the reason) or disabled; the ticket and for how long. Change slots with −/+. Start the Coder or Reviewer on a ticket now. |
@@ -237,6 +243,8 @@ Log in with `CODEIT_API_TOKEN` from `.env`; the browser remembers it for 30 days
 | Runs | Every run, filtered by agent or ticket, with status, time and cost |
 | Run | The result (PR, review checks and verdict), orchestrator events, and the live Claude transcript |
 | Budget | Claude window, parking and runs today; OpenRouter spend per role and free requests against their caps |
+
+**Fast lane.** For times of fast delivery, switch on **Fast lane** on the Agents page, or run `uv run codeit fast-lane on`. PRs then skip the Reviewer agent and go straight to Human Review, labelled `fast-lane`. CI still has to pass, and you still merge (ADR-0016). Turn it off the same way.
 
 Slot changes from the dashboard apply to the next claim and are kept in `data/slots.json`, which wins over `config.yaml`. Scripts can call the API with `Authorization: Bearer $CODEIT_API_TOKEN`.
 

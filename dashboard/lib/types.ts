@@ -16,6 +16,13 @@ export interface AgentsResponse {
   running: boolean;
   agents: Agent[];
   slots: Record<string, number>;
+  fast_lane?: boolean;
+}
+
+export interface RuntimeSettings {
+  fast_lane: boolean;
+  changed_at: string | null;
+  changed_by: string | null;
 }
 
 export interface Ticket {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "motion/react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
@@ -9,6 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { useNow } from "@/components/use-now";
 import { api } from "@/lib/api";
+import { roleColor } from "@/lib/roles";
 import type { RunSummary } from "@/lib/types";
 import { ago, duration, usd } from "@/lib/utils";
 
@@ -34,7 +36,7 @@ function Runs() {
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-xl font-semibold">Runs</h1>
+        <h1 className="font-display text-3xl font-semibold tracking-tight">Runs</h1>
         <div className="flex flex-wrap gap-2">
           <Select aria-label="Role" value={role} onChange={(e) => setFilter("role", e.target.value)}>
             <option value="">All agents</option>
@@ -68,14 +70,25 @@ function Runs() {
             </tr>
           </thead>
           <tbody className="tabular">
-            {(data ?? []).map((r) => (
-              <tr key={r.id} className="border-b border-line last:border-0 hover:bg-accent-soft/40">
+            {(data ?? []).map((r, i) => (
+              <motion.tr
+                key={r.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(i, 20) * 0.02, duration: 0.3 }}
+                className="border-b border-line transition-colors last:border-0 hover:bg-panel-2"
+              >
                 <td className="px-4 py-2 font-mono text-xs">
-                  <Link className="text-accent hover:underline" href={`/run/?id=${r.id}`}>
+                  <Link className="text-ink underline-offset-4 hover:underline" href={`/run/?id=${r.id}`}>
                     {r.id.slice(-8)}
                   </Link>
                 </td>
-                <td className="px-4 py-2">{r.instance || r.role}</td>
+                <td className="px-4 py-2">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="size-2 rounded-full" style={{ background: roleColor(r.role) }} />
+                    {r.instance || r.role}
+                  </span>
+                </td>
                 <td className="px-4 py-2 font-mono text-xs">{r.ticket_key}</td>
                 <td className="px-4 py-2">
                   <Badge tone={runTone(r.status)}>{r.status}</Badge>
@@ -83,7 +96,7 @@ function Runs() {
                 <td className="px-4 py-2 text-muted">{ago(r.started_at, now)}</td>
                 <td className="px-4 py-2 text-right">{duration(r.started_at, r.ended_at, now)}</td>
                 <td className="px-4 py-2 text-right">{usd(r.cost_usd)}</td>
-              </tr>
+              </motion.tr>
             ))}
             {data?.length === 0 && (
               <tr>

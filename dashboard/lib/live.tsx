@@ -31,6 +31,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         running: data.running ?? old?.running ?? true,
         agents: data.agents,
         slots: data.slots ?? old?.slots ?? {},
+        fast_lane: data.fast_lane ?? old?.fast_lane,
       })),
     );
     on<Budget>("budget_update", (data) => client.setQueryData(["budget"], data));

@@ -538,6 +538,28 @@ def up(
         raise typer.Exit(code=1) from e
 
 
+@app.command("fast-lane")
+def fast_lane(
+    state: Annotated[
+        str | None, typer.Argument(help="on or off; leave out to show the current state.")
+    ] = None,
+    config: ConfigPath = DEFAULT_CONFIG_PATH,
+) -> None:
+    """Skip the Reviewer agent: Agent Review tickets go straight to Human Review (ADR-0016).
+    A running `codeit up` picks the change up on its next loop."""
+    from codeit.orchestrator import settings as runtime_settings
+
+    cfg = _load(config)
+    if state is not None:
+        if state not in ("on", "off"):
+            typer.echo("Say on or off.", err=True)
+            raise typer.Exit(code=2)
+        runtime_settings.save(cfg.data_dir, by="cli", fast_lane=state == "on")
+    s = runtime_settings.load(cfg.data_dir)
+    since = f" (set by {s.changed_by}, {s.changed_at:%Y-%m-%d %H:%M})" if s.changed_at else ""
+    typer.echo(f"fast lane: {'on' if s.fast_lane else 'off'}{since}")
+
+
 @app.command("budget")
 def budget(config: ConfigPath = DEFAULT_CONFIG_PATH) -> None:
     """Show backend budget state: Claude window and parking, OpenRouter spend today."""

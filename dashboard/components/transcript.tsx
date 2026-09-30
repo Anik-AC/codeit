@@ -3,6 +3,7 @@
 // Renders a Claude Code stream-json transcript as it streams in: the agent's messages,
 // its tool calls and their results, and the final result line.
 
+import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +46,7 @@ function Entry({ line }: { line: Line }) {
             <p key={i} className="whitespace-pre-wrap">{b.text}</p>
           ) : b.type === "tool_use" ? (
             <div key={i} className="rounded-md bg-code px-3 py-2">
-              <div className="font-mono text-xs font-semibold text-accent">{b.name}</div>
+              <div className="font-mono text-xs font-semibold" style={{ color: "var(--coder)" }}>{b.name}</div>
               <pre className="mt-1 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-muted">{short(b.input, 400)}</pre>
             </div>
           ) : null,
@@ -117,7 +118,15 @@ export function Transcript({ runId }: { runId: string }) {
       <div className="flex items-center justify-between text-xs text-muted">
         <span>
           {lines.length} events ·{" "}
-          {state === "streaming" ? "live" : state === "done" ? "complete" : "stream closed"}
+          {state === "streaming" ? (
+            <span className="inline-flex items-center gap-1.5" style={{ color: "var(--ok)" }}>
+              <span className="anim-breathe size-1.5 rounded-full" style={{ background: "var(--ok)" }} /> live
+            </span>
+          ) : state === "done" ? (
+            "complete"
+          ) : (
+            "stream closed"
+          )}
         </span>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
@@ -126,7 +135,14 @@ export function Transcript({ runId }: { runId: string }) {
       </div>
       <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto text-sm">
         {lines.map((line, i) => (
-          <Entry key={i} line={line} />
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+          >
+            <Entry line={line} />
+          </motion.div>
         ))}
         <div ref={bottom} />
       </div>
