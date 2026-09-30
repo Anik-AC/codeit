@@ -38,7 +38,6 @@ from codeit.agents.reviewer.checks import (
     run_commands,
 )
 from codeit.agents.reviewer.verdict import (
-    ModelCall,
     Routing,
     Verdict,
     apply_override,
@@ -51,6 +50,7 @@ from codeit.agents.reviewer.verdict import (
 )
 from codeit.backends.base import BackendUnavailable, ChatBackend
 from codeit.backends.registry import chat_route
+from codeit.backends.structured import ModelCall
 from codeit.config import Config, Secrets
 from codeit.git import Git
 from codeit.github_client import GitHubClient, PullRequest, repo_slug

@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.12 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0017)
+**Status:** Draft v1.13 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0018)
 **Date:** 2026-09-29
 
 ---
@@ -658,10 +658,10 @@ Every poll cycle:
     - human returns
     - notable decisions
     - agent cost summary
-  - **`docs/adr/NNNN-{slug}.md`:** created only when a PR body or review thread contains a design decision. An ops-model classification call decides this. Uses a Michael Nygard-style template.
+  - **`docs/adr/NNNN-{slug}.md`:** created only when a PR body or review thread contains a design decision. The same model call that writes the changelog decides this (ADR-0018). Uses a Michael Nygard-style template.
   - **`README.md`:** the block between `<!-- codeit:status:start -->` and `<!-- codeit:status:end -->` is replaced with a metrics table (tickets shipped, median review loops, first-pass reviewer rate, latest eval pass@1 and pass^3).
 - **After the PR opens:** add label `docs-logged` to each processed ticket.
-- **Target repos:** runs against both the CodeIt repo (the system's own worklog) and each target repo (a changelog for that product).
+- **Target repos:** each target repo (a changelog for that product). A docs PR on the CodeIt repo itself needs a token for it; today's tokens are sandbox-only (ADR-0018).
 - **Acceptance:** after 3 merged tickets, one docs PR contains correct changelog entries, a work log and an updated status block.
 
 ### 11.7 Learning agent
@@ -1020,9 +1020,9 @@ routing:
   coder:    { primary: claude_code, fallback: opencode_paid, fallback_requires_label: allow-fallback }
   reviewer: { primary: openrouter_paid_review, fallback: openrouter_free }
   rebase:   { primary: claude_code, fallback: opencode_paid }
-  docs:     { primary: openrouter_free, fallback: openrouter_paid_cheap }
-  learning: { primary: claude_code_chat, fallback: openrouter_paid_cheap }
-  ops:      { primary: openrouter_free }
+  docs:     { primary: claude_code_chat, fallback: openrouter_free }   # ADR-0018
+  learning: { primary: claude_code_chat, fallback: openrouter_free }
+  ops:      { primary: claude_code_chat, fallback: openrouter_free }
 models:
   openrouter_free: ["<free-model-1>:free", "<free-model-2>:free", "<free-model-3>:free"]
   openrouter_paid_review: ["<cheap-non-anthropic-coding-model>"]

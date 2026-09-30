@@ -13,16 +13,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from codeit.agents.reviewer.checks import NO_TESTS, Phase1
 from codeit.backends.base import (
-    BackendOutputError,
-    BackendUnavailable,
     ChatBackend,
     ChatMessage,
-    ChatRequest,
 )
+from codeit.backends.structured import ModelCall, structured
 from codeit.log import get_logger
 from codeit.prompts import TEMPLATES_DIR, render
 
@@ -82,14 +80,6 @@ class FileSummaries(_Strict):
     files: list[FileSummary]
 
 
-@dataclass(frozen=True)
-class ModelCall:
-    backend: str
-    model: str | None
-    calls: int
-    cost_usd: float | None
-
-
 def checks_markdown(phase1: Phase1) -> str:
     rows = ["| Check | Result | Time | Note |", "|---|---|---|---|"]
     for c in phase1.checks:
@@ -101,43 +91,7 @@ def checks_markdown(phase1: Phase1) -> str:
     return "\n".join(rows)
 
 
-async def _structured[M: BaseModel](
-    backends: Sequence[ChatBackend], messages: list[ChatMessage], model: type[M], name: str
-) -> tuple[M, ModelCall]:
-    """Ask the first available backend for `model`, retrying once on invalid output."""
-    schema = model.model_json_schema()
-    reasons: list[str] = []
-    for backend in backends:
-        convo = list(messages)
-        cost: float | None = None
-        try:
-            for attempt in (1, 2):
-                try:
-                    result = await backend.complete(
-                        ChatRequest(convo, json_schema=schema, schema_name=name)
-                    )
-                except BackendOutputError as e:
-                    answer, error = e.text, f"- not valid JSON: {e}"
-                else:
-                    cost = (cost or 0) + (result.cost_usd or 0)
-                    try:
-                        parsed = model.model_validate(result.data)
-                        return parsed, ModelCall(backend.name, result.model, attempt, cost)
-                    except ValidationError as err:
-                        answer = result.text
-                        error = "\n".join(
-                            f"- {'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-                            for e in err.errors()
-                        )
-                log.warning("reviewer.invalid_output", backend=backend.name, attempt=attempt)
-                convo += [
-                    ChatMessage("assistant", answer),
-                    ChatMessage("user", render("reviewer/retry.md", error=error)),
-                ]
-            reasons.append(f"{backend.name}: invalid output twice")
-        except BackendUnavailable as e:
-            reasons.append(str(e))
-    raise BackendUnavailable("; ".join(reasons) or "no backend configured")
+_structured = structured
 
 
 async def model_verdict(

@@ -147,3 +147,23 @@ async def post_review(gh: GitHubClient, repo: str, number: int, body_md: str) ->
         f"/repos/{repo}/pulls/{number}/reviews", {"body": body_md, "event": "COMMENT"}
     )
     return str(data.get("html_url", ""))
+
+
+async def create_pr(
+    gh: GitHubClient, repo: str, *, head: str, base: str, title: str, body: str
+) -> PullRequest:
+    """Open a pull request from `head` into `base` (needs a token that can write PRs)."""
+    data = await gh.post_json(
+        f"/repos/{repo}/pulls", {"head": head, "base": base, "title": title, "body": body}
+    )
+    return PullRequest.from_api(data)
+
+
+async def reviewer_summary(gh: GitHubClient, repo: str, number: int, mark: str) -> str | None:
+    """The body of CodeIt's latest Reviewer review on a PR (the one carrying `mark`)."""
+    reviews = [
+        r
+        for r in await gh.get_all(f"/repos/{repo}/pulls/{number}/reviews")
+        if mark in (r.get("body") or "")
+    ]
+    return str(reviews[-1]["body"]) if reviews else None

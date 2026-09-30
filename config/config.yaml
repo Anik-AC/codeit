@@ -21,9 +21,11 @@ routing:
   coder:    { primary: claude_code, fallback: opencode_paid, fallback_requires_label: allow-fallback }
   reviewer: { primary: openrouter_paid_review, fallback: openrouter_free }
   rebase:   { primary: claude_code, fallback: opencode_paid }
-  docs:     { primary: openrouter_free, fallback: openrouter_paid_cheap }
-  learning: { primary: claude_code_chat, fallback: openrouter_paid_cheap }
-  ops:      { primary: openrouter_free }
+  # Everything except the Reviewer runs on the Claude subscription (owner, 2026-09-30).
+  # The free OpenRouter list is only a backup for when Claude is usage-limited.
+  docs:     { primary: claude_code_chat, fallback: openrouter_free }
+  learning: { primary: claude_code_chat, fallback: openrouter_free }
+  ops:      { primary: claude_code_chat, fallback: openrouter_free }
 
 models:
   # Free models with structured-output support, from openrouter.ai/api/v1/models (2026-09-25).

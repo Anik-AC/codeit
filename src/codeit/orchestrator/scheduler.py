@@ -34,13 +34,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 from ulid import ULID
 
 from codeit.config import Config, ConfigError, Role, Secrets, load_config
-from codeit.db.models import AgentInstance
+from codeit.db.models import AgentInstance, Run
 from codeit.events import record_event
 from codeit.jira_client import JiraClient, JiraIds, JiraNotFound
 from codeit.jira_client.issues import get_ticket
@@ -59,8 +59,9 @@ from codeit.sandbox.containers import Sandbox
 log = get_logger(__name__)
 
 ROLES: tuple[Role, ...] = ("reviewer", "coder")
-INSTANCE_ROLES: tuple[Role, ...] = ("reviewer", "coder", "rebase")
+INSTANCE_ROLES: tuple[Role, ...] = ("reviewer", "coder", "rebase", "docs")
 FindRebase = Callable[[], Awaitable[list[str]]]
+DOCS_KEY = "DOCS"
 JQL: Mapping[str, str] = {
     "reviewer": 'project = {p} AND status = "Agent Review" ORDER BY updated ASC',
     "coder": 'project = {p} AND status = "Ready for Dev" ORDER BY priority DESC, created ASC',
@@ -96,10 +97,11 @@ class AgentRunner(Protocol):
 
 def default_runners() -> dict[str, AgentRunner]:
     from codeit.agents.coder_run import run_coder
+    from codeit.agents.docs import run_docs
     from codeit.agents.rebase import run_rebase
     from codeit.agents.reviewer.run import run_reviewer
 
-    return {"coder": run_coder, "reviewer": run_reviewer, "rebase": run_rebase}
+    return {"coder": run_coder, "reviewer": run_reviewer, "rebase": run_rebase, "docs": run_docs}
 
 
 @dataclass
@@ -146,6 +148,7 @@ class Orchestrator:
         self.bus = bus or EventBus()
         self.find_rebase = find_rebase
         self._last_rebase_poll: datetime | None = None
+        self._docs_day: str | None = None  # the local date of the last docs run
         self.overrides_path = cfg.data_dir / "slots.json"
         self.slot_overrides = self._load_overrides()
         self.slots: dict[str, int] = {
@@ -195,6 +198,7 @@ class Orchestrator:
         for role in ROLES:
             await self._step(f"schedule {role}", functools.partial(self._schedule, role))
         await self._step("rebase poll", self._rebase_poll)
+        await self._step("docs", self._docs_daily)
         await self._step("merge watcher", self._merge)
         await self._step("tickets", self._refresh_tickets)
         self._write_instances()
@@ -240,6 +244,32 @@ class Orchestrator:
                 continue
             self._spawn("rebase", key)
             free -= 1
+
+    async def _docs_daily(self) -> None:
+        """Once a local day, at or after `docs.run_at`, start the Docs agent (PRD 11.6).
+        A restart the same day does not run it again: a finished docs run started today
+        counts."""
+        if "docs" not in self.runners or self.slots.get("docs", 0) <= 0:
+            return
+        local = self.clock().astimezone()
+        today = local.date().isoformat()
+        if self._docs_day == today or local.strftime("%H:%M") < self.cfg.docs.run_at:
+            return
+        if DOCS_KEY in self.jobs or self.cooldown.get(DOCS_KEY, self.clock()) > self.clock():
+            return
+        midnight = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        with Session(self.engine) as s:
+            done_today = s.scalars(
+                select(Run.id)
+                .where(Run.role == "docs", Run.started_at >= midnight)
+                .where(Run.status.not_in(("error", "running")))
+                .limit(1)
+            ).first()
+        self._docs_day = today if done_today else None
+        if done_today or self.leases.holder(DOCS_KEY) is not None:
+            return
+        self._docs_day = today
+        self._spawn("docs", DOCS_KEY)
 
     def claude_check(self, own_key: str) -> Callable[[], Decision]:
         """For a rebase job: may Claude run now, not counting the job's own lease?"""

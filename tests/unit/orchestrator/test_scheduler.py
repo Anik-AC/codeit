@@ -17,7 +17,7 @@ from codeit.jira_client import JiraClient
 from codeit.orchestrator.budget import Budget
 from codeit.orchestrator.leases import LeaseStore
 from codeit.orchestrator.scheduler import Orchestrator, RunRefused
-from codeit.runs import record_run
+from codeit.runs import finish_run, record_run
 from tests.conftest import REPO_ROOT
 from tests.unit.orchestrator.fake_jira import IDS, FakeJira
 
@@ -201,7 +201,12 @@ async def test_slots_reload_without_restart(
     path.write_text(yaml.safe_dump(raw))
     await tick(o)
     assert reviewer.calls == [] and o.slots["reviewer"] == 0
-    assert states(engine) == {"reviewer-1": "disabled", "coder-1": "idle", "rebase-1": "idle"}
+    assert states(engine) == {
+        "reviewer-1": "disabled",
+        "coder-1": "idle",
+        "rebase-1": "idle",
+        "docs-1": "idle",
+    }
 
     raw["slots"]["reviewer"] = 1
     path.write_text(yaml.safe_dump(raw))
@@ -367,3 +372,40 @@ def test_waiting_reasons_compare_without_numbers() -> None:
         "Claude is parked until 04:00"
     )
     assert _kind(None) is None
+
+
+async def test_docs_runs_once_a_day_after_run_at(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    calls: list[str] = []
+
+    async def docs(cfg: Config, secrets: Secrets, ids: Any, key: str, **kw: Any) -> None:
+        calls.append(key)
+        record_run(engine, kw["run_id"], "docs")
+        finish_run(engine, kw["run_id"], "docs", {"status": "pr_opened"})
+
+    now = datetime(2026, 9, 30, 6, 30).astimezone()  # local time, before 07:00
+    o = orchestrator(cfg, engine, jira, {})
+    o.runners = {"docs": docs}  # type: ignore[dict-item]
+    o.clock = lambda: now.astimezone(UTC)
+    await tick(o)
+    assert calls == []
+    now = now.replace(hour=7, minute=5)
+    await tick(o)
+    await settle(o)
+    assert calls == ["DOCS"]
+    await tick(o)
+    await settle(o)
+    assert calls == ["DOCS"]  # once a day
+
+    # A restart the same day sees today's finished run and does not run again.
+    again = orchestrator(cfg, engine, jira, {})
+    again.runners = {"docs": docs}  # type: ignore[dict-item]
+    again.clock = lambda: now.astimezone(UTC)
+    await tick(again)
+    await settle(again)
+    assert calls == ["DOCS"]
+    now = now + timedelta(days=1)  # the next morning
+    await tick(again)
+    await settle(again)
+    assert calls == ["DOCS", "DOCS"]

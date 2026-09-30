@@ -78,6 +78,26 @@ function RebaseGlyph({ busy }: { busy: boolean }) {
   );
 }
 
+function DocsGlyph({ busy }: { busy: boolean }) {
+  // A page with a folded corner; its lines write themselves while the Scribe works.
+  return (
+    <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
+      <path d="M7 4 H17 L22 9 V24 H7 Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M17 4 V9 H22" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" opacity="0.6" />
+      {[12.5, 16.5, 20.5].map((y, i) => (
+        <path
+          key={y}
+          d={`M10 ${y} H${i === 2 ? 15 : 19}`}
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          style={busy ? { strokeDasharray: 10, animation: `draw 1.6s ease-in-out ${i * 0.35}s infinite alternate`, ["--len" as string]: 10 } : undefined}
+        />
+      ))}
+    </svg>
+  );
+}
+
 function PlannerGlyph({ busy }: { busy: boolean }) {
   return (
     <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
@@ -112,7 +132,7 @@ export function AgentAvatar({ role, state, size = 56 }: { role: string; state: A
   const color = roleColor(role);
   const busy = state === "busy";
   const Glyph =
-    role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : role === "rebase" ? RebaseGlyph : PlannerGlyph;
+    role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : role === "rebase" ? RebaseGlyph : role === "docs" ? DocsGlyph : PlannerGlyph;
   return (
     <div
       className={cn("relative grid shrink-0 place-items-center", state === "disabled" && "opacity-35 grayscale")}
