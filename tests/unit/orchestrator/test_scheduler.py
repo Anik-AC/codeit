@@ -384,9 +384,12 @@ async def test_docs_runs_once_a_day_after_run_at(
         calls.append(key)
         record_run(engine, kw["run_id"], "docs")
         finish_run(engine, kw["run_id"], "docs", {"status": "pr_opened"})
+        with Session(engine) as s, s.begin():  # stamped by the fake clock, not the real one
+            run = s.get(Run, kw["run_id"])
+            assert run is not None
+            run.started_at = now.astimezone(UTC)
 
-    # Far ahead of the real clock: the runner records runs at the real time.
-    now = datetime(2030, 9, 30, 6, 30).astimezone()  # local time, before 07:00
+    now = datetime(2026, 9, 30, 6, 30).astimezone()  # local time, before 07:00
     o = orchestrator(cfg, engine, jira, {})
     o.runners = {"docs": docs}  # type: ignore[dict-item]
     o.clock = lambda: now.astimezone(UTC)
