@@ -93,6 +93,19 @@ class GitHubClient:
             raise GitHubError(message, resp.status_code)
         return resp.json()
 
+    async def patch_json(self, url: str, body: Any) -> Any:
+        """One PATCH, no retries."""
+        try:
+            resp = await self._http.patch(url, json=body)
+        except httpx.TransportError as e:
+            raise GitHubError(f"PATCH {url}: {e}") from e
+        if resp.status_code >= 400:
+            message = f"PATCH {url} -> {resp.status_code}: {_message(resp)}"
+            if resp.status_code == 404:
+                raise GitHubNotFound(message, 404)
+            raise GitHubError(message, resp.status_code)
+        return resp.json()
+
     async def get_json(self, url: str, params: Mapping[str, Any] | None = None) -> Any:
         return (await self._get(url, params)).json()
 

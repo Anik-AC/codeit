@@ -46,6 +46,7 @@ from codeit.git import Git
 from codeit.model_env import effective_models
 from codeit.orchestrator.budget import CLAUDE_ROLES, Budget
 from codeit.orchestrator.leases import LeaseStore
+from codeit.prompts import prompt_hash
 from codeit.sandbox.containers import ContainerSpec, Sandbox
 
 Echo = Callable[[str], None]
@@ -66,6 +67,9 @@ class EvalContext:
     sandbox: Sandbox = field(default_factory=Sandbox)
     echo: Echo = print
     keep: bool = False
+    # Files written over each Coder workspace before the agent starts, e.g. a proposed
+    # CLAUDE.md (the Learning agent's eval gate, ADR-0019).
+    steering: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         db.upgrade(self.cfg.db_path)
@@ -298,6 +302,7 @@ async def _one_coder_run(
 ) -> CoderRow:
     name = f"{eval_id[-8:]}-{task.id}-{repeat}"
     prepared = await ctx.workspaces.prepare(name, ctx.suite.base_commit, f"{task.id}-eval-{repeat}")
+    base = await _apply_steering(ctx, prepared.path) if ctx.steering else ctx.suite.base_commit
     _set_sha(ctx.engine, eval_id, _steering_sha(prepared.path))
     started = time.monotonic()
     notes: dict[str, Any] = {}
@@ -313,10 +318,10 @@ async def _one_coder_run(
         if agent is not None and agent.status == "usage_limited":
             raise EvalStopped("Claude hit its usage limit")
         await _commit_leftovers(ctx, prepared.path, task)
-        diff_lines = await ctx.workspaces.diff_lines(prepared.path, ctx.suite.base_commit)
+        diff_lines = await ctx.workspaces.diff_lines(prepared.path, base)
         verdict = None
         if review:
-            verdict = await _review(ctx, prepared.path, task, reviewer_backends, notes)
+            verdict = await _review(ctx, prepared.path, task, reviewer_backends, notes, base)
         async with container(ctx, str(ULID()), prepared.path) as run:
             hidden = await score(ctx.suite, task, prepared.path, run)
     finally:
@@ -353,6 +358,18 @@ async def _one_coder_run(
     return row
 
 
+async def _apply_steering(ctx: EvalContext, path: Path) -> str:
+    """Write `ctx.steering` into the workspace and commit it; the commit is the new base,
+    so the agent's diff does not include it."""
+    for rel, text in ctx.steering.items():
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_text(text, encoding="utf-8")
+    await ctx.git.run("add", "--", *ctx.steering, cwd=path)
+    if await ctx.git.run("status", "--porcelain", cwd=path):
+        await ctx.git.run("commit", "--quiet", "--no-verify", "-m", "eval: steering", cwd=path)
+    return await ctx.git.run("rev-parse", "HEAD", cwd=path)
+
+
 def _steering_sha(workspace: Path) -> str:
     prompts = Path(__file__).resolve().parents[3] / "prompts" / "coder"
     files = [*prompts.glob("*.md"), workspace / "CLAUDE.md", *(workspace / ".claude").rglob("*")]
@@ -368,8 +385,9 @@ async def _review(
     task: Task,
     backends: Sequence[ChatBackend] | None,
     notes: dict[str, Any],
+    base: str | None = None,
 ) -> str | None:
-    base = ctx.suite.base_commit
+    base = base or ctx.suite.base_commit
     head = await ctx.git.run("rev-parse", "HEAD", cwd=path)
     changed, diff = await workspace_diff(ctx.git, path, base)
     review_id = str(ULID())
@@ -404,12 +422,14 @@ async def run_review_eval(
     tasks: Sequence[Task],
     *,
     backends: Sequence[ChatBackend] | None = None,
+    config_name: str = "reviewer",
 ) -> str:
     """The seeded-bug suite: each task's clean reference and its mutants."""
     eval_id = str(ULID())
     models = effective_models(ctx.cfg).get(ctx.cfg.routing["reviewer"].primary)
     model = models[0] if isinstance(models, list) and models else None
-    _start_run(ctx.engine, eval_id, f"{ctx.suite.name}-review", "reviewer", None, model)
+    sha = prompt_hash("reviewer")[:12]
+    _start_run(ctx.engine, eval_id, f"{ctx.suite.name}-review", config_name, sha, model)
     rows: list[ReviewRow] = []
     try:
         for task in tasks:

@@ -30,8 +30,9 @@ _The Docs agent keeps this block current in the target repo's README (see [codei
 | M8 API + dashboard | Done |
 | M9 Eval harness | Done |
 | M10 Rebase agent | Done |
-| M11 Docs agent | In review |
-| M12 to M13 | Planned (see PRD section 23) |
+| M11 Docs agent | Done |
+| M12 Learning agent | In review |
+| M13 Fallback backend | Planned (see PRD section 23) |
 
 ## Requirements
 
@@ -257,6 +258,31 @@ uv run codeit run docs
   - the README status block
 - **Afterwards:** each ticket gets the `docs-logged` label, so the next run skips it.
 
+## Learning agent
+
+Turns review feedback into steering rules, and tests them with evals before you merge them (PRD 11.7, ADR-0019). `codeit up` runs it on Sunday at 22:00 (`learning.cron`), or sooner once 10 new human signals come in. To run it now:
+
+```bash
+uv run codeit run learning                                         # collect, learn, propose, gate
+uv run codeit run learning --signals evals/suites/learning/signals.yaml   # a synthetic set
+uv run codeit learning status                                      # signals, open lessons, proposals
+uv run codeit learning gate                                        # finish pending eval gates only
+```
+
+1. **Collects signals:**
+   - your Jira comments and PR reviews on agent work
+   - the Reviewer's critical findings
+   - failures in the latest eval runs
+
+   CodeIt's own comments are left out.
+2. **Finds lessons:** Claude turns each signal into a one-line lesson for the Coder, the Reviewer or the Planner. A lesson qualifies when it comes up twice, or once if you wrote `#learn` in the comment.
+3. **Proposes rules:** one line per lesson, added under `## Learned from feedback` in the agent's steering file.
+   - Coder rules: the target repo's `CLAUDE.md`, as a PR.
+   - Reviewer and Planner rules: CodeIt's own prompts. Without a CodeIt token they arrive as a branch and a patch under `data/learning/`; add `GITHUB_TOKEN_CODEIT` to get PRs instead.
+4. **Eval gate:** runs the matching eval before and after the change (Coder: 3 golden tasks; Reviewer: 18 seeded-bug variants; Planner: the Planner eval) and puts the table on the PR. A metric worse by more than 0.05 adds the `regression` label. The Coder part waits for Claude's run window.
+
+It never merges anything.
+
 ## Dashboard
 
 `codeit up` also serves a web dashboard and its API on http://127.0.0.1:8770 (PRD 14, ADR-0014). Build it once, and again after pulling dashboard changes:
@@ -294,6 +320,7 @@ Measure the Coder and the Reviewer on fixed tasks (PRD 17, ADR-0015; details in 
 uv run codeit eval verify                  # check the suite itself
 uv run codeit eval run --repeats 3         # the Coder on all 12 golden tasks, 3 times each
 uv run codeit eval review                  # the Reviewer on 12 good and 24 seeded-bug patches
+uv run codeit eval planner                 # the Planner on 3 sample plans, judged on INVEST
 uv run codeit eval report --compare default,other
 ```
 
@@ -304,6 +331,7 @@ uv run codeit eval report --compare default,other
   - `--review` also runs the Reviewer on each result.
 - **Claude limits:** Coder evals use Claude like the orchestrator does. They wait for the run window (`--any-time` to override), take the one Claude slot, and stop cleanly if Claude hits its usage limit. A full run with 3 repeats is 36 Claude runs; start it in the evening.
 - **`eval review`:** reports the Reviewer's catch rate on planted bugs and its false-fail rate on correct patches.
+- **`eval planner`:** drafts three sample plans (`evals/suites/planner/`) without Jira and reports how many were valid, and an INVEST score and plan coverage from a judge model (rubric in `evals/rubrics/invest.md`).
 - **Dashboard:** the Evals page charts pass@1 over time, per steering version (the Coder prompts and the target's steering kit).
 
 ## Models and keys

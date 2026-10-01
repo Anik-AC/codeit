@@ -46,6 +46,8 @@ class PRComment(BaseModel):
     path: str | None = None
     line: int | None = None
     state: str | None = None  # reviews: APPROVED | CHANGES_REQUESTED | COMMENTED
+    id: int | None = None
+    url: str | None = None
 
 
 async def find_pr(gh: GitHubClient, repo: str, branch: str) -> PullRequest | None:
@@ -97,6 +99,8 @@ async def pr_feedback(
                     body=raw["body"],
                     created_at=raw["submitted_at"],
                     state=raw.get("state"),
+                    id=raw.get("id"),
+                    url=raw.get("html_url"),
                 )
             )
     for raw in await gh.get_all(f"/repos/{repo}/pulls/{number}/comments"):
@@ -108,12 +112,19 @@ async def pr_feedback(
                 created_at=raw["created_at"],
                 path=raw.get("path"),
                 line=raw.get("line") or raw.get("original_line"),
+                id=raw.get("id"),
+                url=raw.get("html_url"),
             )
         )
     for raw in await gh.get_all(f"/repos/{repo}/issues/{number}/comments"):
         out.append(
             PRComment(
-                kind="comment", author=_login(raw), body=raw["body"], created_at=raw["created_at"]
+                kind="comment",
+                author=_login(raw),
+                body=raw["body"],
+                created_at=raw["created_at"],
+                id=raw.get("id"),
+                url=raw.get("html_url"),
             )
         )
     if since is not None:
@@ -167,3 +178,27 @@ async def reviewer_summary(gh: GitHubClient, repo: str, number: int, mark: str) 
         if mark in (r.get("body") or "")
     ]
     return str(reviews[-1]["body"]) if reviews else None
+
+
+async def list_prs(
+    gh: GitHubClient, repo: str, *, state: str = "all", max_pages: int = 3
+) -> list[dict[str, Any]]:
+    """Pull requests, most recently updated first (raw API objects)."""
+    out: list[dict[str, Any]] = []
+    for page in range(1, max_pages + 1):
+        batch = await gh.get_json(
+            f"/repos/{repo}/pulls",
+            {"state": state, "sort": "updated", "direction": "desc", "per_page": 100, "page": page},
+        )
+        out += batch
+        if len(batch) < 100:
+            break
+    return out
+
+
+async def update_pr_body(gh: GitHubClient, repo: str, number: int, body: str) -> None:
+    await gh.patch_json(f"/repos/{repo}/pulls/{number}", {"body": body})
+
+
+async def add_pr_labels(gh: GitHubClient, repo: str, number: int, labels: list[str]) -> None:
+    await gh.post_json(f"/repos/{repo}/issues/{number}/labels", {"labels": labels})

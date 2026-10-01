@@ -14,6 +14,7 @@ import uvicorn
 from sqlalchemy import Engine
 
 from codeit import db
+from codeit.agents.learning.run import collect as collect_signals
 from codeit.agents.rebase import rebase_candidates
 from codeit.config import Config, Secrets
 from codeit.github_client import GitHubClient, repo_slug
@@ -132,6 +133,7 @@ async def serve(
                 find_rebase=functools.partial(
                     rebase_candidates, gh, repo_slug(repo.url), jira, ids
                 ),
+                collect_signals=functools.partial(collect_signals, cfg, secrets, ids, engine, jira),
             )
             async with api_server(cfg, secrets, engine, bus, budget, orchestrator, echo):
                 await orchestrator.run_forever(stop)

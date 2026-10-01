@@ -141,6 +141,8 @@ class EvalResult(Base):
 
 
 class Signal(Base):
+    """Feedback the Learning agent learns from (PRD 11.7, ADR-0019)."""
+
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -152,6 +154,35 @@ class Signal(Base):
     theme: Mapped[str | None] = mapped_column(String(32))
     lesson: Mapped[str | None] = mapped_column(Text)
     used_in_learning_run: Mapped[str | None] = mapped_column(String(26))
+    # Where it came from, for dedup: e.g. `jira-comment:10231`, `gh-review:991`.
+    external_id: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
+    human: Mapped[bool] = mapped_column(Boolean, default=True)
+    learn: Mapped[bool] = mapped_column(Boolean, default=False)  # the human wrote `#learn`
+    url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None]
+    # new -> classified | ignored -> addressed (a proposal took it up)
+    status: Mapped[str] = mapped_column(String(16), default="new", index=True)
+    target: Mapped[str | None] = mapped_column(String(16))  # coder | reviewer | planner
+    lesson_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    proposal_id: Mapped[str | None] = mapped_column(String(26))
+
+
+class LearningProposal(Base):
+    """One steering change the Learning agent proposed, and its eval gate."""
+
+    __tablename__ = "learning_proposals"
+
+    id: Mapped[str] = mapped_column(String(26), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(26), index=True)
+    repo: Mapped[str] = mapped_column(String(16))  # target | codeit
+    branch: Mapped[str] = mapped_column(String(128))
+    pr_url: Mapped[str | None] = mapped_column(Text)
+    patch_path: Mapped[str | None] = mapped_column(Text)  # when there is no PR
+    changes_json: Mapped[dict[str, Any]]  # {"targets": [...], "lessons": [...]}
+    gate_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    gate_json: Mapped[dict[str, Any] | None]
+    created_at: Mapped[datetime]
+    gated_at: Mapped[datetime | None]
 
 
 class McpToken(Base):

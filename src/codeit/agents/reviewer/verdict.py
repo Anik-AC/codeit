@@ -22,7 +22,7 @@ from codeit.backends.base import (
 )
 from codeit.backends.structured import ModelCall, structured
 from codeit.log import get_logger
-from codeit.prompts import TEMPLATES_DIR, render
+from codeit.prompts import prompt_path, render
 
 log = get_logger(__name__)
 
@@ -103,9 +103,7 @@ async def model_verdict(
     phase1: Phase1,
     suggestions: Sequence[str] = (),
 ) -> tuple[Verdict, ModelCall]:
-    checklist = (TEMPLATES_DIR.parent / "prompts" / "reviewer" / "checklist.md").read_text(
-        encoding="utf-8"
-    )
+    checklist = prompt_path("reviewer/checklist.md").read_text(encoding="utf-8")
     system = ChatMessage("system", render("reviewer/system.md", checklist=checklist))
     diff = diff[:MAX_DIFF_BYTES]
     summaries = ""

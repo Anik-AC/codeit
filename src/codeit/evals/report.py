@@ -25,6 +25,14 @@ CODER_METRICS = (
     "median_diff_lines",
 )
 REVIEW_METRICS = ("critical_catch_rate", "false_fail_rate", "mutants", "clean", "total_cost_usd")
+PLANNER_METRICS = (
+    "schema_valid",
+    "first_try_valid",
+    "invest",
+    "coverage",
+    "median_stories",
+    "total_cost_usd",
+)
 
 
 def _fmt(value: Any) -> str:
@@ -61,7 +69,8 @@ def run_report(run: EvalRun, results: Sequence[EvalResult]) -> str:
         f"steering {run.steering_sha or '-'}, {run.started_at:%Y-%m-%d %H:%M}"
         + (f" (stopped: {s['stopped']})" if s.get("stopped") else "")
     )
-    names = REVIEW_METRICS if review else CODER_METRICS
+    planner = run.suite == "planner"
+    names = REVIEW_METRICS if review else PLANNER_METRICS if planner else CODER_METRICS
     summary = table(
         ["metric", "value"],
         [[n.replace("^k", f"^{s.get('repeats', 'k')}"), _fmt(metric(s, n))] for n in names],
@@ -77,6 +86,22 @@ def run_report(run: EvalRun, results: Sequence[EvalResult]) -> str:
             ],
         )
         return f"{head}\n\n{summary}\n\n{kinds}\n\n{detail}\n"
+    if planner:
+        detail = table(
+            ["plan", "repeat", "valid", "INVEST", "cost", "notes"],
+            [
+                [
+                    r.task_id,
+                    str(r.repeat_idx + 1),
+                    "yes" if r.passed else "NO",
+                    _fmt(r.hidden_pass_ratio),
+                    _fmt(r.cost_usd),
+                    _planner_note(r.notes),
+                ]
+                for r in results
+            ],
+        )
+        return f"{head}\n\n{summary}\n\n{detail}\n"
     detail = table(
         ["task", "repeat", "passed", "hidden", "turns", "cost", "time", "diff", "review"],
         [
@@ -126,3 +151,15 @@ def compare(runs: Sequence[EvalRun], reports_dir: Path) -> tuple[str, Path]:
     body = f"# Eval comparison {stamp}\n\n{text}\n\n```json\n{raw}\n```\n"
     path.write_text(body, encoding="utf-8")
     return text, path
+
+
+def _planner_note(notes: str | None) -> str:
+    data = json.loads(notes or "{}")
+    parts = []
+    if data.get("error"):
+        parts.append(str(data["error"])[:80])
+    if data.get("missing"):
+        parts.append("missing: " + "; ".join(data["missing"])[:80])
+    if data.get("weak"):
+        parts.append("weak: " + "; ".join(data["weak"])[:80])
+    return " | ".join(parts) or "-"

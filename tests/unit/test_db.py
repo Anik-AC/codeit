@@ -14,6 +14,7 @@ from codeit.db.models import Base, Lease
 
 PRD_TABLES = {
     "runs",
+    "learning_proposals",
     "events",
     "leases",
     "agent_instances",

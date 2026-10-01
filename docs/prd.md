@@ -1,7 +1,7 @@
 # CodeIt: PRD
 
 **Owner:** Onix (Anik Chakraborti)
-**Status:** Draft v1.13 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0018)
+**Status:** Draft v1.14 (renamed to CodeIt; host-side jira-mcp; see ADRs 0001 to 0019)
 **Date:** 2026-09-29
 
 ---
@@ -688,6 +688,12 @@ Every poll cycle:
   5. **Eval gate:** the orchestrator runs the golden eval set (Section 17) with the PR branch's steering files and appends a before/after table to the PR. On regression beyond `eval.regression_tolerance`, add label `regression`.
 - **Never merges its own PRs.**
 - **Acceptance:** given a fixture set of 12 synthetic signals with 3 planted recurring themes, the agent proposes edits addressing all 3, and the eval table appears on the PR.
+- **As built (ADR-0019):**
+  - Signals exclude CodeIt's own comments. Eval signals come from the latest run of each suite only.
+  - The model proposes one-line rules; CodeIt adds them under `## Learned from feedback`.
+  - CodeIt's own prompts (Reviewer, Planner) go to a patch under `data/learning/` unless `GITHUB_TOKEN_CODEIT` is set, because the tokens are sandbox-only.
+  - The gate runs a subset (config `learning.gate_*`) before and after, through a prompt overlay. The Coder part waits for Claude's run window.
+  - The fixture is `evals/suites/learning/signals.yaml`.
 
 ## 12. Orchestrator
 
@@ -763,7 +769,8 @@ codeit agents                  # show instances
 | `backend_state` | `backend`, `state`, `parked_until`, `last_error` |
 | `eval_runs` | `id`, `suite`, `config_name`, `steering_sha`, `model`, `started_at`, `ended_at`, `summary_json` |
 | `eval_results` | `eval_run_id`, `task_id`, `repeat_idx`, `passed`, `hidden_pass_ratio`, `turns`, `cost_usd`, `duration_s`, `diff_lines`, `reviewer_verdict`, `notes` |
-| `signals` | `id`, `source`, `ticket_key`, `pr`, `author`, `text`, `theme`, `lesson`, `used_in_learning_run` |
+| `signals` | `id`, `source`, `ticket_key`, `pr`, `author`, `text`, `theme`, `lesson`, `used_in_learning_run`, plus (ADR-0019) `external_id`, `human`, `learn`, `url`, `created_at`, `status`, `target`, `lesson_key`, `proposal_id` |
+| `learning_proposals` | `id`, `run_id`, `repo`, `branch`, `pr_url`, `patch_path`, `changes_json`, `gate_status`, `gate_json`, `created_at`, `gated_at` (ADR-0019) |
 | `mcp_tokens` | `token_hash` (SHA-256, PK), `role`, `ticket_key`, `run_id`, `created_at`, `expires_at`, `revoked_at` (Section 15, ADR-0006) |
 
 ## 14. API (FastAPI)
@@ -957,6 +964,7 @@ tasks/
 ### 17.5 Planner evals
 
 - **Moved to M12 (ADR-0015):** Planner evals are built with the Learning agent, which needs them.
+- **As built (ADR-0019):** `codeit eval planner` on 3 sample plans in `evals/suites/planner/`, with schema validity, INVEST and coverage from the judge. Approval rate and edit distance need real use and are not part of the suite.
 
 
 **Suite:** 3 sample plans.
@@ -1044,7 +1052,14 @@ sandbox:
   egress_allowlist: [ ... ]
 rebase: { poll_minutes: 10, max_files: 5 }
 docs: { run_at: "07:00" }
-learning: { cron: "0 22 * * SUN", min_new_signals: 10 }
+learning:
+  cron: "0 22 * * SUN"
+  min_new_signals: 10
+  lookback_days: 30
+  check_minutes: 60
+  gate_coder_tasks: [T004, T005, T010]
+  gate_repeats: 1
+  gate_review_tasks: [T001, T003, T005, T006, T009, T012]   # ADR-0019
 eval: { regression_tolerance: 0.05 }
 mcp: { host: 127.0.0.1, port: 8765, allowed_hosts: ["127.0.0.1:*", "localhost:*"], token_grace_minutes: 5 }
 ```

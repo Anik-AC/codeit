@@ -1,0 +1,47 @@
+# Acceptance fixture for the Learning agent (PRD 11.7): 12 synthetic signals with three
+# planted recurring themes, one per agent, and two that should teach nothing.
+#   A (coder, testing): API tests only cover the happy path, not the 400/404 errors.  x4
+#   B (reviewer): the Reviewer passes buttons that can be clicked twice while saving.  x3
+#   C (planner): tickets for lists do not say what the empty state shows.  x3
+#   noise: thanks, and a one-off CI outage.  x2
+# Run it with: codeit run learning --signals evals/suites/learning/signals.yaml
+
+- source: pr_review
+  ticket_key: CODEIT-101
+  text: "[CODEIT-101, PR #21] The new POST /api/tasks test only checks the 201 case. There is no test that a missing title returns 400 with the error body. Please add it."
+- source: pr_review
+  ticket_key: CODEIT-104
+  text: "[CODEIT-104, PR #24 on tests/unit/server/tasks.test.ts:40] Again only the happy path is tested. PATCH with an unknown id should be covered (404) and bad input (400)."
+- source: jira_comment
+  ticket_key: CODEIT-107
+  text: "[CODEIT-107, Human Review: Delete a task] Sending back: the API test never checks what happens when the id does not exist. Error responses need tests too."
+- source: pr_comment
+  ticket_key: CODEIT-110
+  text: "[CODEIT-110, PR #29] Same as before: tests for the search endpoint skip the validation errors (q shorter than 2 characters should be a 400)."
+
+- source: jira_comment
+  ticket_key: CODEIT-102
+  text: "[CODEIT-102, Human Review: Add a task form] The reviewer passed this, but the Add button stays enabled while the request is in flight, so double clicking creates two tasks."
+- source: pr_review
+  ticket_key: CODEIT-105
+  text: "[CODEIT-105, PR #25] Saving an edit can be triggered twice by pressing Enter quickly; nothing disables the form while saving. The automated review said pass."
+- source: jira_comment
+  ticket_key: CODEIT-111
+  text: "[CODEIT-111, Human Review: Mark done] Checkbox can be toggled again before the first request finishes and the state flips back. The Reviewer should catch missing in-flight guards on buttons and forms."
+
+- source: jira_rejection
+  ticket_key: CODEIT-103
+  text: "[CODEIT-103, Rejected: Show tasks due today] Rejected: the criteria never say what the list shows when there are no tasks due today. Every list ticket needs the empty state."
+- source: jira_comment
+  ticket_key: CODEIT-106
+  text: "[CODEIT-106, Agent Draft: Filter by tag] What does the page show when no task has the tag? The acceptance criteria should spell out the empty state."
+- source: jira_comment
+  ticket_key: CODEIT-109
+  text: "[CODEIT-109, Human Review: Search box] The coder had to guess the no-results message because the ticket did not define it. Tickets that show lists or results must define the empty state text."
+
+- source: pr_comment
+  ticket_key: CODEIT-108
+  text: "[CODEIT-108, PR #27] Thanks, looks good to me."
+- source: jira_comment
+  ticket_key: CODEIT-112
+  text: "[CODEIT-112, In Dev: Sort by due date] CI was down for an hour yesterday because GitHub Actions had an outage; rerunning."

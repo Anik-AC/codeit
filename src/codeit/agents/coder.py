@@ -22,11 +22,14 @@ NEEDS_HUMAN = "needs-human"
 
 # Orchestrator comments end with this marker, so rework feedback can leave them out.
 ORCHESTRATOR_MARK = "_(CodeIt orchestrator)_"
-# The Reviewer signs its PR reviews and Jira comments with this. Its Jira comment is rework
-# feedback; its PR review repeats it, so the Coder skips the PR copy.
-REVIEWER_MARK = "_(CodeIt reviewer"
+# Detection ignores the emphasis around a mark: Jira hands `_x_` back as `*x*`.
+_ORCHESTRATOR_TAG = "(CodeIt orchestrator)"
+# The Reviewer signs its PR reviews and Jira comments with `_(CodeIt reviewer, run ...)_`;
+# this finds either form. Its Jira comment is rework feedback; its PR review repeats it,
+# so the Coder skips the PR copy.
+REVIEWER_MARK = "(CodeIt reviewer"
 # Comments agents post through jira-mcp are signed like this (mcp_servers/jira/tools.py).
-_OWN_SIGNATURES = ("_Posted by coder (run", "_Posted by rebase (run")
+_OWN_SIGNATURES = ("Posted by coder (run", "Posted by rebase (run")
 
 TOOLS = ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Skill", "TodoWrite"]
 MCP_TOOLS = [
@@ -85,7 +88,7 @@ def orchestrator_comment(text: str) -> str:
 
 
 def is_own_comment(body: str) -> bool:
-    return ORCHESTRATOR_MARK in body or any(sig in body for sig in _OWN_SIGNATURES)
+    return _ORCHESTRATOR_TAG in body or any(sig in body for sig in _OWN_SIGNATURES)
 
 
 def ticket_markdown(ticket: Ticket) -> str:

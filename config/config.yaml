@@ -93,5 +93,13 @@ rebase:
   never_auto: ["**/migrations/**", "package-lock.json", ".github/**"]
 
 docs: { run_at: "07:00" }
-learning: { cron: "0 22 * * SUN", min_new_signals: 10 }
+learning:
+  cron: "0 22 * * SUN"   # weekly, local time
+  min_new_signals: 10    # or sooner, once this many new human signals are waiting
+  lookback_days: 30
+  check_minutes: 60
+  # The eval gate (ADR-0019): run before and after a proposed change.
+  gate_coder_tasks: [T004, T005, T010]
+  gate_repeats: 1
+  gate_review_tasks: [T001, T003, T005, T006, T009, T012]
 eval: { regression_tolerance: 0.05 }

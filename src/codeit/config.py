@@ -158,12 +158,24 @@ class DocsConfig(_Strict):
 class LearningConfig(_Strict):
     cron: str = "0 22 * * SUN"
     min_new_signals: PositiveInt = 10
+    lookback_days: PositiveInt = 30  # how far back to look for signals
+    check_minutes: PositiveInt = 60  # how often `codeit up` counts new signals
+    # The eval gate (ADR-0019): a subset, run before and after, so it fits a night.
+    gate_coder_tasks: list[str] = Field(default_factory=lambda: ["T004", "T005", "T010"])
+    gate_repeats: PositiveInt = 1
+    gate_review_tasks: list[str] = Field(
+        default_factory=lambda: ["T001", "T003", "T005", "T006", "T009", "T012"]
+    )
 
     @field_validator("cron")
     @classmethod
     def _check_cron(cls, v: str) -> str:
-        if len(v.split()) != 5:
-            raise ValueError(f"cron {v!r} must have 5 fields")
+        from codeit.cron import Cron, CronError
+
+        try:
+            Cron(v)
+        except CronError as e:
+            raise ValueError(str(e)) from e
         return v
 
 
@@ -224,6 +236,8 @@ class Secrets(BaseSettings):
     jira_api_token: SecretStr | None = None
     github_token_agent: SecretStr | None = None
     github_token_readonly: SecretStr | None = None
+    # Optional: lets the Learning agent open PRs on the CodeIt repo itself (ADR-0019).
+    github_token_codeit: SecretStr | None = None
     claude_code_oauth_token: SecretStr | None = None
     # One OpenRouter key for every role (ADR-0008). The per-role names below still work
     # as fallbacks for older .env files.
