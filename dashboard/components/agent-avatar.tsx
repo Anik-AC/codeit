@@ -98,6 +98,34 @@ function DocsGlyph({ busy }: { busy: boolean }) {
   );
 }
 
+function LearningGlyph({ busy }: { busy: boolean }) {
+  // A light bulb; its rays glow in turn while the Learner works.
+  const rays = ["M14 2.5 V5", "M5.5 6 L7.3 7.8", "M22.5 6 L20.7 7.8", "M3 14 H5.5", "M25 14 H22.5"];
+  return (
+    <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
+      {rays.map((d, i) => (
+        <path
+          key={d}
+          d={d}
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          opacity={busy ? undefined : 0.45}
+          style={busy ? { animation: `breathe 1.6s ease-in-out ${i * 0.2}s infinite` } : undefined}
+        />
+      ))}
+      <path
+        d="M14 8 A6 6 0 0 1 17.6 18.8 V21 H10.4 V18.8 A6 6 0 0 1 14 8 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M11 24 H17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function PlannerGlyph({ busy }: { busy: boolean }) {
   return (
     <svg viewBox="0 0 28 28" className="size-7" aria-hidden>
@@ -132,7 +160,7 @@ export function AgentAvatar({ role, state, size = 56 }: { role: string; state: A
   const color = roleColor(role);
   const busy = state === "busy";
   const Glyph =
-    role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : role === "rebase" ? RebaseGlyph : role === "docs" ? DocsGlyph : PlannerGlyph;
+    role === "coder" ? CoderGlyph : role === "reviewer" ? ReviewerGlyph : role === "rebase" ? RebaseGlyph : role === "docs" ? DocsGlyph : role === "learning" ? LearningGlyph : PlannerGlyph;
   return (
     <div
       className={cn("relative grid shrink-0 place-items-center", state === "disabled" && "opacity-35 grayscale")}

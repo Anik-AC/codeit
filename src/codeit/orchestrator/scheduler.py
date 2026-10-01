@@ -59,9 +59,11 @@ from codeit.sandbox.containers import Sandbox
 log = get_logger(__name__)
 
 ROLES: tuple[Role, ...] = ("reviewer", "coder")
-INSTANCE_ROLES: tuple[Role, ...] = ("reviewer", "coder", "rebase", "docs")
+INSTANCE_ROLES: tuple[Role, ...] = ("reviewer", "coder", "rebase", "docs", "learning")
 FindRebase = Callable[[], Awaitable[list[str]]]
+CollectSignals = Callable[[], Awaitable[int]]
 DOCS_KEY = "DOCS"
+LEARNING_KEY = "LEARNING"
 JQL: Mapping[str, str] = {
     "reviewer": 'project = {p} AND status = "Agent Review" ORDER BY updated ASC',
     "coder": 'project = {p} AND status = "Ready for Dev" ORDER BY priority DESC, created ASC',
@@ -98,10 +100,17 @@ class AgentRunner(Protocol):
 def default_runners() -> dict[str, AgentRunner]:
     from codeit.agents.coder_run import run_coder
     from codeit.agents.docs import run_docs
+    from codeit.agents.learning.run import run_learning
     from codeit.agents.rebase import run_rebase
     from codeit.agents.reviewer.run import run_reviewer
 
-    return {"coder": run_coder, "reviewer": run_reviewer, "rebase": run_rebase, "docs": run_docs}
+    return {
+        "coder": run_coder,
+        "reviewer": run_reviewer,
+        "rebase": run_rebase,
+        "docs": run_docs,
+        "learning": run_learning,
+    }
 
 
 @dataclass
@@ -132,6 +141,7 @@ class Orchestrator:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         bus: EventBus | None = None,
         find_rebase: FindRebase | None = None,
+        collect_signals: CollectSignals | None = None,
     ) -> None:
         self.cfg = cfg
         self.secrets = secrets
@@ -149,6 +159,9 @@ class Orchestrator:
         self.find_rebase = find_rebase
         self._last_rebase_poll: datetime | None = None
         self._docs_day: str | None = None  # the local date of the last docs run
+        self.collect_signals = collect_signals
+        self._learning_since: datetime | None = None  # cron times after this are due
+        self._last_signal_check: datetime | None = None
         self.overrides_path = cfg.data_dir / "slots.json"
         self.slot_overrides = self._load_overrides()
         self.slots: dict[str, int] = {
@@ -199,6 +212,7 @@ class Orchestrator:
             await self._step(f"schedule {role}", functools.partial(self._schedule, role))
         await self._step("rebase poll", self._rebase_poll)
         await self._step("docs", self._docs_daily)
+        await self._step("learning", self._learning_due)
         await self._step("merge watcher", self._merge)
         await self._step("tickets", self._refresh_tickets)
         self._write_instances()
@@ -270,6 +284,49 @@ class Orchestrator:
             return
         self._docs_day = today
         self._spawn("docs", DOCS_KEY)
+
+    async def _learning_due(self) -> None:
+        """Start the Learning agent (PRD 11.7) when its cron time has passed, when enough
+        new human signals came in (counted every `learning.check_minutes`), or when a
+        proposal's eval gate still waits and Claude may run now."""
+        from codeit.agents.learning.run import pending_proposals
+        from codeit.agents.learning.signals import count_new_human, last_learning_run
+        from codeit.cron import Cron
+
+        if "learning" not in self.runners or self.slots.get("learning", 0) <= 0:
+            return
+        now = self.clock()
+        if LEARNING_KEY in self.jobs or self.cooldown.get(LEARNING_KEY, now) > now:
+            return
+        if self.leases.holder(LEARNING_KEY) is not None:
+            return
+        if self._learning_since is None:
+            self._learning_since = last_learning_run(self.engine) or now
+        why = None
+        if Cron(self.cfg.learning.cron).fired_between(
+            self._learning_since.astimezone(), now.astimezone()
+        ):
+            why = f"schedule {self.cfg.learning.cron}"
+        every = timedelta(minutes=self.cfg.learning.check_minutes)
+        if why is None and (
+            self._last_signal_check is None or now - self._last_signal_check >= every
+        ):
+            self._last_signal_check = now
+            if self.collect_signals is not None:
+                await self.collect_signals()
+            new = count_new_human(self.engine)
+            if new >= self.cfg.learning.min_new_signals:
+                why = f"{new} new signals"
+            elif (
+                pending_proposals(self.engine)
+                and self.budget.can_run("coder", claude_running=self._claude_running()).ok
+            ):
+                why = "an eval gate can run"
+        if why is None:
+            return
+        self.echo(f"learning: starting ({why})")
+        self._learning_since = now
+        self._spawn("learning", LEARNING_KEY)
 
     def claude_check(self, own_key: str) -> Callable[[], Decision]:
         """For a rebase job: may Claude run now, not counting the job's own lease?"""

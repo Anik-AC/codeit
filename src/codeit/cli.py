@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
@@ -30,6 +31,7 @@ sandbox_app = typer.Typer(help="Worker image and clone management.", no_args_is_
 eval_app = typer.Typer(help="Evaluation harness.", no_args_is_help=True)
 mcp_app = typer.Typer(help="Host-side jira-mcp server and run tokens.", no_args_is_help=True)
 dashboard_app = typer.Typer(help="The web dashboard (served by `codeit up`).", no_args_is_help=True)
+learning_app = typer.Typer(help="The Learning agent's signals and proposals.", no_args_is_help=True)
 
 app.add_typer(config_app, name="config")
 app.add_typer(db_app, name="db")
@@ -38,6 +40,7 @@ app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(eval_app, name="eval")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(dashboard_app, name="dashboard")
+app.add_typer(learning_app, name="learning")
 
 ConfigPath = Annotated[
     Path, typer.Option("--config", "-c", help="Path to config.yaml.", dir_okay=False)
@@ -350,10 +353,25 @@ def run(
     ids: IdsPath = DEFAULT_IDS_PATH,
     any_time: Annotated[
         bool,
-        typer.Option("--any-time", help="Rebase: let Claude resolve conflicts outside its window."),
+        typer.Option(
+            "--any-time",
+            help="Rebase and learning: let Claude run outside its window.",
+        ),
+    ] = False,
+    signals: Annotated[
+        Path | None,
+        typer.Option(
+            "--signals",
+            help="Learning only: learn from this YAML of signals instead of collecting.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    no_gate: Annotated[
+        bool, typer.Option("--no-gate", help="Learning only: skip the eval gate.")
     ] = False,
 ) -> None:
-    """Run one agent once on a ticket (docs takes no ticket: it writes up everything new)."""
+    """Run one agent once on a ticket (docs and learning take no ticket)."""
     if role == "reviewer":
         _run_reviewer(key, config, ids)
         return
@@ -363,9 +381,11 @@ def run(
     if role == "docs":
         _run_docs(config, ids)
         return
+    if role == "learning":
+        _run_learning(config, ids, signals, gate=not no_gate, any_time=any_time)
+        return
     if role != "coder":
-        later = {"learning": "M12"}
-        _not_implemented(later.get(role, "later milestones"))
+        _not_implemented("later milestones")
     from codeit.agents.coder_run import CoderError, run_coder, run_coder_local
     from codeit.jira_client.discover import load_ids
     from codeit.sandbox.containers import SandboxError
@@ -396,6 +416,91 @@ def run(
     typer.echo(f"workspace: {outcome.workspace}")
     if outcome.outcome.status not in ("pr_opened", "pr_updated", "committed"):
         raise typer.Exit(code=1)
+
+
+def _run_learning(
+    config: Path, ids: Path, signals: Path | None, *, gate: bool, any_time: bool
+) -> None:
+    from codeit.agents.learning.run import LearningError, run_learning
+    from codeit.jira_client.discover import load_ids
+
+    cfg = _load(config)
+    try:
+        result = asyncio.run(
+            run_learning(
+                cfg, Secrets(), load_ids(ids), echo=typer.echo, signals_file=signals,
+                gate=gate, any_time=any_time,
+            )
+        )  # fmt: skip
+    except (LearningError, JiraError, FileNotFoundError) as e:
+        typer.echo(f"Learning failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    typer.echo(f"lessons: {', '.join(result.lessons) or 'none'}")
+    for p in result.proposals:
+        typer.echo(f"proposal: {p}")
+    for pid, status in result.gates.items():
+        typer.echo(f"gate {pid}: {status}")
+
+
+@learning_app.command("gate")
+def learning_gate(
+    any_time: Annotated[
+        bool, typer.Option("--any-time", help="Let the Coder part ignore Claude's window.")
+    ] = False,
+) -> None:
+    """Run what is left of every pending eval gate, without collecting signals."""
+    from codeit.agents.learning.gate import GateDeps
+    from codeit.agents.learning.run import LEASE_KEY, LEASE_TTL, run_pending_gates
+    from codeit.orchestrator.leases import LeaseStore
+    from codeit.sandbox.containers import Sandbox
+
+    cfg = _load(DEFAULT_CONFIG_PATH)
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
+    leases, run_id = LeaseStore(engine), f"GATE-{int(time.time())}"
+    if not leases.acquire(LEASE_KEY, "learning", "cli", run_id, LEASE_TTL):
+        typer.echo("A learning run is going; try later.", err=True)
+        raise typer.Exit(code=1)
+
+    async def go() -> dict[str, str]:
+        async with leases.keep_alive(LEASE_KEY, run_id, LEASE_TTL):
+            deps = GateDeps(cfg, Secrets(), engine, Sandbox(), typer.echo, any_time=any_time)
+            return await run_pending_gates(deps)
+
+    try:
+        results = asyncio.run(go())
+    finally:
+        leases.release(LEASE_KEY, run_id)
+    for pid, status in results.items() or {"-": "no pending gates"}.items():
+        typer.echo(f"gate {pid}: {status}")
+
+
+@learning_app.command("status")
+def learning_status() -> None:
+    """Signals by state, open lessons, and proposals with their eval gate."""
+    from sqlalchemy import func, select
+    from sqlalchemy.orm import Session
+
+    from codeit.agents.learning.lessons import open_lessons
+    from codeit.db.models import LearningProposal, Signal
+
+    cfg = _load(DEFAULT_CONFIG_PATH)
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
+    with Session(engine) as s:
+        counts = s.execute(select(Signal.status, func.count()).group_by(Signal.status)).all()
+        proposals = s.scalars(
+            select(LearningProposal).order_by(LearningProposal.created_at.desc()).limit(10)
+        ).all()
+    typer.echo("signals: " + (", ".join(f"{st} {n}" for st, n in counts) or "none"))
+    for lesson in open_lessons(engine).values():
+        typer.echo(
+            f"  open lesson {lesson.target}:{lesson.key} x{len(lesson.signals)}"
+            f"{' (#learn)' if lesson.learn else ''}: {lesson.lesson}"
+        )
+    for p in proposals:
+        where = p.pr_url or p.patch_path or p.branch
+        typer.echo(f"proposal {p.id} ({p.repo}) gate {p.gate_status}: {where}")
 
 
 def _run_docs(config: Path, ids: Path) -> None:
@@ -772,6 +877,41 @@ def eval_review(suite: SuiteOpt = "golden", tasks: TasksOpt = None, keep: KeepOp
     eval_id = asyncio.run(run_review_eval(ctx, chosen))
     run = next(r for r in latest_runs(ctx.engine) if r.id == eval_id)
     typer.echo(run_report(run, results_of(ctx.engine, eval_id)))
+
+
+@eval_app.command("planner")
+def eval_planner(
+    repeats: Annotated[int, typer.Option("--repeats", min=1, max=10)] = 1,
+    plans: Annotated[
+        str | None, typer.Option("--plans", help="Comma-separated plan ids, e.g. P1-task-basics.")
+    ] = None,
+) -> None:
+    """Draft the sample plans with the Planner and judge them on INVEST (PRD 17.5)."""
+    from codeit.backends.registry import chat_route
+    from codeit.evals.planner import load_planner_suite, run_planner_eval
+    from codeit.evals.report import run_report
+    from codeit.evals.runner import latest_runs, results_of
+
+    cfg = _load(DEFAULT_CONFIG_PATH)
+    db.upgrade(cfg.db_path)
+    engine = db.make_engine(cfg.db_path)
+    suite = load_planner_suite()
+    wanted = set(plans.split(",")) if plans else None
+    cases = [c for c in suite.cases if wanted is None or c.id in wanted]
+    secrets = Secrets()
+    eval_id = asyncio.run(
+        run_planner_eval(
+            engine,
+            suite,
+            chat_route(cfg, secrets, "planner"),
+            chat_route(cfg, secrets, "ops"),
+            repeats=repeats,
+            cases=cases,
+            echo=typer.echo,
+        )
+    )
+    run = next(r for r in latest_runs(engine) if r.id == eval_id)
+    typer.echo(run_report(run, results_of(engine, eval_id)))
 
 
 @eval_app.command("report")

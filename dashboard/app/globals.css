@@ -22,6 +22,7 @@
   --reviewer: #2dd4bf;
   --rebase: #60a5fa;
   --docs: #bef264;
+  --learning: #fb923c;
   --human: #f472b6;
   --done: #4ade80;
 
@@ -51,6 +52,7 @@
     --reviewer: #0d9488;
     --rebase: #2563eb;
     --docs: #4d7c0f;
+    --learning: #c2410c;
     --human: #db2777;
     --done: #16a34a;
     --accent: #c98a04;
@@ -101,6 +103,7 @@
   --color-reviewer: var(--reviewer);
   --color-rebase: var(--rebase);
   --color-docs: var(--docs);
+  --color-learning: var(--learning);
   --color-human: var(--human);
   --color-done: var(--done);
   --color-accent: var(--accent);

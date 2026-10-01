@@ -206,6 +206,7 @@ async def test_slots_reload_without_restart(
         "coder-1": "idle",
         "rebase-1": "idle",
         "docs-1": "idle",
+        "learning-1": "idle",
     }
 
     raw["slots"]["reviewer"] = 1
@@ -409,3 +410,45 @@ async def test_docs_runs_once_a_day_after_run_at(
     await tick(again)
     await settle(again)
     assert calls == ["DOCS", "DOCS"]
+
+
+async def test_learning_starts_on_its_schedule_or_on_new_signals(
+    cfg: Config, engine: Engine, jira: JiraClient, fake_jira: FakeJira
+) -> None:
+    from codeit.agents.learning.signals import RawSignal, store
+
+    calls: list[str] = []
+    collected: list[int] = []
+
+    async def learning(cfg: Config, secrets: Secrets, ids: Any, key: str, **kw: Any) -> None:
+        calls.append(key)
+
+    async def collect() -> int:
+        collected.append(1)
+        return 0
+
+    saturday = datetime(2026, 10, 3, 12, 0).astimezone()
+    now = saturday
+    o = orchestrator(cfg, engine, jira, {})
+    o.runners = {"learning": learning}  # type: ignore[dict-item]
+    o.collect_signals = collect
+    o.clock = lambda: now.astimezone(UTC)
+    await tick(o)
+    await settle(o)
+    assert calls == [] and collected == [1]  # checked signals, nothing due
+    await tick(o)
+    assert collected == [1]  # counted every learning.check_minutes, not every tick
+
+    now = datetime(2026, 10, 4, 22, 1).astimezone()  # Sunday 22:00 has passed
+    await tick(o)
+    await settle(o)
+    assert calls == ["LEARNING"]
+    await tick(o)
+    await settle(o)
+    assert calls == ["LEARNING"]  # once per scheduled time
+
+    store(engine, [RawSignal(f"x:{i}", "jira_comment", "fix it") for i in range(10)])
+    now = now + timedelta(hours=2)
+    await tick(o)
+    await settle(o)
+    assert calls == ["LEARNING", "LEARNING"]  # 10 new human signals

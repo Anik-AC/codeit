@@ -1,0 +1,8 @@
+# The Planner eval suite (PRD 17.5, ADR-0019): sample plans for the sandbox app. The
+# Planner drafts each one, without Jira, against a fixed snapshot of the target's
+# CLAUDE.md and file tree (golden base commit d576021).
+name: planner
+plans:
+  - P1-task-basics
+  - P2-tags-and-search
+  - P3-stats-endpoint

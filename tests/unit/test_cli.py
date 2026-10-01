@@ -50,10 +50,10 @@ def test_db_upgrade(tmp_path: Path) -> None:
     assert (tmp_path / "data" / "codeit.db").exists()
 
 
-def test_stub_names_milestone() -> None:
-    result = runner.invoke(app, ["run", "learning"])
+def test_unknown_role_is_not_implemented() -> None:
+    result = runner.invoke(app, ["run", "ops"])
     assert result.exit_code == 2
-    assert "M12" in result.output
+    assert "later milestones" in result.output
 
 
 def test_json_logs_carry_run_context(tmp_path: Path) -> None:

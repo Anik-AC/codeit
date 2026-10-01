@@ -19,7 +19,10 @@ import { ROLES, roleColor } from "@/lib/roles";
 import type { Agent, AgentsResponse, Budget, RunSummary, Ticket } from "@/lib/types";
 import { ago, duration, usd } from "@/lib/utils";
 
-const SECTIONS = ["coder", "reviewer", "rebase", "docs"] as const;
+const MAIN_SECTIONS = ["coder", "reviewer"] as const;
+// Agents that work around the main flow: keeping PRs current, writing docs, learning.
+const SUPPORT_SECTIONS = ["rebase", "docs", "learning"] as const;
+type SectionRole = (typeof MAIN_SECTIONS)[number] | (typeof SUPPORT_SECTIONS)[number];
 const STATE_TEXT: Record<Agent["state"], string> = {
   busy: "Working",
   idle: "Ready",
@@ -282,6 +285,44 @@ function RecentRuns({ runs, now }: { runs: RunSummary[]; now: number }) {
   );
 }
 
+function RoleSection({
+  role,
+  agents,
+  running,
+  slots,
+  now,
+}: {
+  role: SectionRole;
+  agents: Agent[];
+  running: boolean;
+  slots: Record<string, number>;
+  now: number;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="size-2.5 shrink-0 rounded-full" style={{ background: roleColor(role) }} />
+          <div className="min-w-0">
+            <CardTitle>{ROLES[role].label}s</CardTitle>
+            <p className="truncate text-xs text-faint" title={ROLES[role].does}>
+              {ROLES[role].does}
+            </p>
+          </div>
+        </div>
+        {running && <SlotControl role={role} count={slots[role] ?? 0} />}
+      </CardHeader>
+      <ul className="flex flex-col gap-2.5 p-4">
+        {agents
+          .filter((a) => a.role === role)
+          .map((a, i) => (
+            <AgentCard key={a.name} agent={a} now={now} i={i} />
+          ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default function AgentsPage() {
   const now = useNow();
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<AgentsResponse>("/api/agents") });
@@ -328,26 +369,13 @@ export default function AgentsPage() {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {SECTIONS.map((role) => (
-          <Card key={role}>
-            <CardHeader>
-              <div className="flex min-w-0 items-center gap-2.5">
-                <span className="size-2.5 shrink-0 rounded-full" style={{ background: roleColor(role) }} />
-                <div className="min-w-0">
-                  <CardTitle>{ROLES[role].label}s</CardTitle>
-                  <p className="truncate text-xs text-faint">{ROLES[role].does}</p>
-                </div>
-              </div>
-              {agents.data?.running && <SlotControl role={role} count={agents.data.slots[role] ?? 0} />}
-            </CardHeader>
-            <ul className="flex flex-col gap-2.5 p-4">
-              {list
-                .filter((a) => a.role === role)
-                .map((a, i) => (
-                  <AgentCard key={a.name} agent={a} now={now} i={i} />
-                ))}
-            </ul>
-          </Card>
+        {MAIN_SECTIONS.map((role) => (
+          <RoleSection key={role} role={role} agents={list} running={agents.data?.running ?? false} slots={agents.data?.slots ?? {}} now={now} />
+        ))}
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {SUPPORT_SECTIONS.map((role) => (
+          <RoleSection key={role} role={role} agents={list} running={agents.data?.running ?? false} slots={agents.data?.slots ?? {}} now={now} />
         ))}
       </div>
 

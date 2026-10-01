@@ -64,6 +64,10 @@ def test_own_comments_are_recognized() -> None:
     assert is_own_comment(orchestrator_comment("Picked up"))
     assert is_own_comment("Done.\n\n_Posted by coder (run R1)_")
     assert not is_own_comment("Reviewer: missing test.\n\n_Posted by reviewer (run R2)_")
+    # As Jira hands them back: `_x_` becomes `*x*`.
+    assert is_own_comment("Picked up by coder-1 (run R).\n\n*(CodeIt orchestrator)*")
+    assert is_own_comment("Fixed.\n\n*Posted by coder (run R1)*")
+    assert not is_own_comment("Please change the wording.")
     assert not is_own_comment("Please also handle empty titles.")
     assert orchestrator_comment("x").endswith(ORCHESTRATOR_MARK)
 
